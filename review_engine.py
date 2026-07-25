@@ -83,32 +83,66 @@ def process(in_bytes):
     if not rows:
         raise ValueError("CS 검체(BF/HDL/LDL Sample) 데이터를 찾지 못했습니다. 레이아웃을 확인하세요.")
 
-    # 1) 선택 하이라이트 (combo)
-    painted = 0
+    # 0) 재업로드(이미 처리된 파일) 대비: 이전에 생성된 시트 제거 → 멱등 처리
+    NOFILL = PatternFill(fill_type=None)
+    for nm in list(wb.sheetnames):
+        if nm in ('2026.7_결과선택', '2026.7 측정결과 검토', '제출결과_선택검토') or nm.startswith('결과정리_'):
+            del wb[nm]
+    # 결과정리는 업로드 파일과 동일하게 — CS 검체 반복셀의 선택 채움(노란색) 제거
     for name, amap in rows.items():
-        rBF, rHDL, rLDL = amap.get('BF'), amap.get('HDL'), amap.get('LDL')
-        if not (rBF and rHDL and rLDL): continue
-        for cols in (D1, D2):
-            BF = [_num(ws.cell(rBF, c).value) for c in cols]
-            HDL = [_num(ws.cell(rHDL, c).value) for c in cols]
-            LDL = [_num(ws.cell(rLDL, c).value) for c in cols]
-            if any(v is None for v in BF + HDL + LDL): continue
-            _, keep, *_ = combo_pick(BF, HDL, LDL)
-            for rr in (rBF, rHDL, rLDL):
-                for k in keep:
-                    ws.cell(rr, cols[k]).fill = YEL; painted += 1
+        for an in ('BF', 'HDL', 'LDL'):
+            rr = amap.get(an)
+            if not rr: continue
+            for c in D1 + D2:
+                if ws.cell(rr, c).fill.patternType == 'solid':
+                    ws.cell(rr, c).fill = NOFILL
 
-    # 2) Control member 초과 빨강
-    for q in qc:
-        pass  # (판정은 검토 시트에 집계; 원표는 하이라이트만)
+    # 1) 결과정리는 원본 그대로 유지(하이라이트 없음). 선택 표시는 별도 '2026.7_결과선택' 시트에.
+    sel = wb.copy_worksheet(ws)
+    sel.title = '2026.7_결과선택'
+    painted = _highlight_selection(sel, rows)
 
-    # 3) 검토 시트
+    # 2) 검토 시트
     _build_review_sheet(wb, rows, qc)
+
+    # 2b) 검토 가이드 시트
+    _build_guide_sheet(wb, qc)
+
+    # 3) 시트 순서: 검토_가이드, (원본…) 결과정리, 2026.7_결과선택, 2026.7 측정결과 검토
+    order = ['검토_가이드', 'RESULT(Conc)_DAY1', 'RESULT(Conc)_DAY2', '결과정리',
+             '2026.7_결과선택', '2026.7 측정결과 검토']
+    wb._sheets.sort(key=lambda s: order.index(s.title) if s.title in order else 999)
 
     out = io.BytesIO(); wb.save(out); out.seek(0)
     n_exc = sum(1 for q in qc if _verdict(q['analyte'], q['biaspct'], q['biasmgdl'])[1] is False)
     summary = {'samples': len(rows), 'painted': painted, 'qc_rows': len(qc), 'member_exceed': n_exc}
     return out.read(), summary
+
+
+def _highlight_selection(ws, rows):
+    """복제한 시트에 채택 2반복(combo)을 노란색 표시하고 범례를 추가."""
+    painted = 0
+    for name, amap in rows.items():
+        rBF, rHDL, rLDL = amap.get('BF'), amap.get('HDL'), amap.get('LDL')
+        if not (rBF and rHDL and rLDL):
+            continue
+        for cols in (D1, D2):
+            BF = [_num(ws.cell(rBF, c).value) for c in cols]
+            HDL = [_num(ws.cell(rHDL, c).value) for c in cols]
+            LDL = [_num(ws.cell(rLDL, c).value) for c in cols]
+            if any(v is None for v in BF + HDL + LDL):
+                continue
+            _, keep, *_ = combo_pick(BF, HDL, LDL)
+            for rr in (rBF, rHDL, rLDL):
+                for k in keep:
+                    ws.cell(rr, cols[k]).fill = YEL; painted += 1
+    lg = ws.max_row + 2
+    ws.cell(lg, 2).fill = YEL
+    c = ws.cell(lg, 3, value='노란색 = CRMLN 제출용 선택(채택) 2반복 · 기준: 종합(BF+HDL 상대편차·균형) · '
+                              '검체별 동일 R index 잠금(BF·HDL·LDL) · QC/Control 미제출')
+    c.font = Font(name='맑은 고딕', size=9, color='555555')
+    c.alignment = Alignment(horizontal='left', vertical='center')
+    return painted
 
 
 def _build_review_sheet(wb, rows, qc):
@@ -202,7 +236,82 @@ def _build_review_sheet(wb, rows, qc):
     from openpyxl.worksheet.properties import PageSetupProperties
     ws.page_setup.orientation = 'landscape'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
-    # 검토 시트를 결과정리 뒤로
-    order = wb.sheetnames
-    if '결과정리' in order:
-        wb.move_sheet('2026.7 측정결과 검토', offset=-(len(order) - 1 - order.index('결과정리') - 1))
+    # (시트 순서는 process()에서 일괄 정렬)
+
+
+def _build_guide_sheet(wb, qc):
+    """생성 파일 안내 + member 기준 + 선택 로직 + Claude for Excel 프롬프트."""
+    if '검토_가이드' in wb.sheetnames:
+        del wb['검토_가이드']
+    g = wb.create_sheet('검토_가이드')
+    from openpyxl.worksheet.properties import PageSetupProperties
+    NAVY, BLUE = '1F3A5F', '2C6E9B'
+    thin = Side(style='thin', color='CCCCCC'); box = Border(thin, thin, thin, thin)
+
+    def C(r, c, v, bold=False, size=10, color='222222', fill=None, align='left', wrap=False, border=False, italic=False):
+        x = g.cell(r, c, v); x.font = Font(name='맑은 고딕', bold=bold, size=size, color=color, italic=italic)
+        x.alignment = Alignment(horizontal=align, vertical='center', wrap_text=wrap)
+        if fill: x.fill = PatternFill('solid', fgColor=fill)
+        if border: x.border = box
+        return x
+
+    def M(r, c1, c2, v, **k):
+        g.merge_cells(start_row=r, start_column=c1, end_row=r, end_column=c2); return C(r, c1, v, **k)
+
+    NC = 6; R = 1
+    M(R, 1, NC, 'CRMLN 2026년 7월 측정결과 검토 파일 — 가이드', bold=True, size=14, color='FFFFFF', fill=NAVY, align='center'); g.row_dimensions[R].height = 26; R += 1
+    M(R, 1, NC, 'KDCA NMRL(Lab 509) · HDL-C / LDL-C(β-quantification) · 웹 대시보드 자동 생성 · Claude for Excel 연계용', size=10, color='FFFFFF', fill=BLUE, align='center'); R += 2
+
+    M(R, 1, NC, '① 파일 구성 (자동 생성된 시트)', bold=True, size=12, color='FFFFFF', fill=BLUE); R += 1
+    for t in [
+        '· [결과정리] : 업로드한 측정지 원본 그대로(선택 표시 없음, 업로드 파일과 동일).',
+        '· [2026.7_결과선택] : CS 검체의 채택 2반복을 노란색으로 표시(선택 기준 종합·균형, BF·HDL·LDL 동일 R index 잠금, QC·Control 미제출).',
+        '· [2026.7 측정결과 검토] : ① QC·Control member 판정  ② 제출 선택(채택값)  ③ 종합 고찰.',
+    ]:
+        M(R, 1, NC, t, size=10, wrap=True); g.row_dimensions[R].height = 22; R += 1
+    R += 1
+
+    M(R, 1, NC, '② CRMLN member laboratory 판정 기준', bold=True, size=12, color='FFFFFF', fill=BLUE); R += 1
+    for i, h in enumerate(['항목', '기준', '비고']):
+        C(R, i + 1, h, bold=True, size=9.5, fill='EEF2F6', border=True, align='center')
+    R += 1
+    for row in [('NIST (TC)', 'bias ±1%', 'SRM 1951 정확도 앵커'),
+                ('BF (하부분획)', 'bias ±2%', 'LDL 기준 준용(BF=LDL 상류)'),
+                ('HDL-C', 'bias ±1 mg/dL', '저농도 → mg/dL로 판정'),
+                ('LDL-C', 'bias ±2%', '')]:
+        for i, v in enumerate(row):
+            C(R, i + 1, v, size=10, border=True, align='center' if i == 1 else 'left')
+        R += 1
+    R += 1
+
+    M(R, 1, NC, '③ 선택(채택) 로직', bold=True, size=12, color='FFFFFF', fill=BLUE); R += 1
+    for t in [
+        '· 각 CS 검체·Day에서 R1/R2/R3 중 1개를 제외하고 2개를 채택.',
+        '· 제외 기준: BF·HDL 각각 median 대비 상대편차(%)의 합이 가장 큰 replicate(=이상치) 제외.',
+        '· BF·HDL·LDL은 동일 R index로 잠금 채택(LDL = BF − HDL 정합 유지).',
+        '· QC·Control은 제출 대상이 아니므로 선택하지 않음(전체 3반복 사용).',
+        '· 방법론 원칙: 정밀도 기반 선택 — 결과를 유리하게 만들기 위한 선택은 지양.',
+    ]:
+        M(R, 1, NC, t, size=10, wrap=True); g.row_dimensions[R].height = 20; R += 1
+    R += 1
+
+    M(R, 1, NC, '④ Claude for Excel 활용 프롬프트 (복사해서 사용)', bold=True, size=12, color='FFFFFF', fill=BLUE); R += 1
+    M(R, 1, NC, 'Excel의 Claude for Excel add-in 대화창에 아래 문장을 붙여넣어 검토를 이어갈 수 있습니다.', size=9, color='555555', wrap=True); R += 1
+    for p in [
+        '"[2026.7_결과선택] 시트에서 채택 2반복(노란색)의 평균을 CS 검체별 BF·HDL·LDL로 계산해 제출용 표로 만들어줘. LDL=BF−HDL 정합도 확인해줘."',
+        '"[2026.7 측정결과 검토] 시트의 QC·Control 판정을 요약하고, member 기준 초과 항목의 원인 가설을 정리해줘."',
+        '"이번 회차 CS 검체 반복 CV와 Day1–Day2 재현성을 계산하고, member 정밀도 기준(TC 1%·LDL 1.5%·HDL 1SD) 대비 판정표를 만들어줘."',
+        '"직전 회차 검토 파일과 비교해 QC bias 변화(경향·변동성)를 표로 정리하고, 참고검사법 성능 개선 관점의 고찰을 3줄로 써줘."',
+        '"제출용 값은 CDC 참조법 회신 전 잠정임을 명시하고, 최종 확정 체크리스트를 만들어줘."',
+    ]:
+        M(R, 1, NC, p, size=10, wrap=True, fill='F5F8FA', border=True); g.row_dimensions[R].height = 30; R += 1
+    R += 1
+    exc = [q for q in qc if _verdict(q['analyte'], q['biaspct'], q['biasmgdl'])[1] is False]
+    exc_txt = ', '.join('%s %s' % (q['analyte'], q['name']) for q in exc) or '없음'
+    M(R, 1, NC, '※ 이번 파일 요약 — QC·Control member 기준 초과: %s.  최종 제출·판정은 CDC 회신 및 검토자 확인 후 확정.' % exc_txt, size=9, color='888888', wrap=True); g.row_dimensions[R].height = 26; R += 1
+    M(R, 1, NC, '※ Claude for Excel은 Pro·Max·Team·Enterprise 플랜에서 Excel(웹·Windows·Mac·iPad) add-in으로 사용합니다. 매크로·VBA는 지원하지 않습니다.', size=9, color='888888', wrap=True); g.row_dimensions[R].height = 26; R += 1
+
+    for i, w in enumerate([20, 18, 26, 16, 16, 16]): g.column_dimensions[get_column_letter(i + 1)].width = w
+    g.sheet_view.showGridLines = False
+    g.page_setup.orientation = 'landscape'; g.page_setup.fitToWidth = 1; g.page_setup.fitToHeight = 0
+    g.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)

@@ -1,0 +1,50 @@
+{% extends 'base.html' %}
+{% block title %}사용자 설명서{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>사용자 설명서</h2>
+  <p class="muted">CRMLN 측정결과 검토·평가경향 대시보드 사용 안내입니다. KDCA NMRL(Lab 509) · HDL-C / LDL-C(β-quantification).</p>
+
+  <h3>1. 로그인 · 메뉴</h3>
+  <p>관리자가 발급한 아이디·비밀번호로 로그인합니다. 상단 메뉴에서 <b>대시보드</b>(초기 화면), <b>사용자 설명서</b>, (관리자만) <b>관리자</b>, <b>로그아웃</b>을 이용할 수 있습니다.</p>
+
+  <h3>2. 대시보드 보기</h3>
+  <p>화면 오른쪽에 CRMLN 측정결과 검토·평가경향 대시보드가 표시됩니다. 상단 탭으로 <b>① 2026.7 측정결과 검토 · ② 평가보고서 경향분석 · ③ QC–평가 관련성 · ④ HDL-C DCM · ⑤ BF 하부분획</b>을 전환하고, 상단 필터(전체·BF-TC·HDL-C·LDL-C)와 다크 모드를 사용할 수 있습니다. 판정선은 CRMLN member laboratory 기준입니다.</p>
+
+  <h3>3. 측정 엑셀 업로드 → 검토 파일 생성</h3>
+  <p>왼쪽 패널에 표준 CRMLN 측정지(<b>결과정리</b> 시트 포함) .xlsx 파일을 끌어놓거나 클릭하여 선택한 뒤 <b>검토 파일 생성·다운로드</b>를 누르면, 다음 시트가 자동 생성된 파일을 내려받습니다.</p>
+  <table>
+    <thead><tr><th>시트</th><th>내용</th></tr></thead>
+    <tbody>
+      <tr><td>검토_가이드</td><td>파일 구성·판정 기준·선택 로직·Claude for Excel 프롬프트 안내</td></tr>
+      <tr><td>RESULT(Conc)_DAY1 / DAY2</td><td>이번 회차 원자료(농도)</td></tr>
+      <tr><td>2026-07_결과정리</td><td>측정지(업로드 값)</td></tr>
+      <tr><td>2026.7_결과선택</td><td>선택 옵션(드롭다운)에 따라 채택 2반복·평균·CV·판정이 자동 계산되는 동적 시트</td></tr>
+      <tr><td>2026.7 측정결과 검토</td><td>QC·Control 정확도 판정 · 제출 선택(채택값) · 종합 고찰 요약</td></tr>
+    </tbody>
+  </table>
+  <p class="muted" style="margin-top:8px">※ 업로드 파일은 서버에 저장되지 않고 처리 후 결과 파일로만 반환됩니다.</p>
+
+  <h3>4. 판정 기준 (CRMLN member laboratory)</h3>
+  <table>
+    <thead><tr><th>항목</th><th>기준</th></tr></thead>
+    <tbody>
+      <tr><td>NIST (TC)</td><td>bias ±1%</td></tr>
+      <tr><td>BF (하부분획)</td><td>bias ±2% (LDL 기준 준용)</td></tr>
+      <tr><td>HDL-C</td><td>bias ±1 mg/dL</td></tr>
+      <tr><td>LDL-C</td><td>bias ±2%</td></tr>
+    </tbody>
+  </table>
+
+  <h3>5. 선택(채택) 로직</h3>
+  <p>각 CS 검체·Day에서 R1/R2/R3 중 BF·HDL median 대비 상대편차 합이 가장 큰 replicate를 제외하고 2개를 채택합니다(기본: 종합·균형). BF·HDL·LDL은 동일 R index로 잠금 채택하여 LDL=BF−HDL 정합을 유지합니다. QC·Control은 제출 대상이 아니므로 전체 3반복을 사용합니다. <b>결과를 유리하게 만들기 위한 선택은 지양</b>합니다. 생성 파일의 <b>2026.7_결과선택</b> 시트 C4 드롭다운에서 선택 기준을 바꿔 비교할 수 있습니다.</p>
+
+  {% if is_admin %}
+  <h3>6. 관리자 — 사용자 등록</h3>
+  <p>상단 <b>관리자</b> 메뉴에서 사용자 아이디·비밀번호를 등록·변경·삭제하고 관리자 권한을 지정할 수 있습니다. 비밀번호는 해시로만 저장됩니다. 서버에 영구 저장 볼륨이 없으면 재배포 시 초기화될 수 있으므로, 관리자 화면의 <b>USERS_JSON 백업</b>을 Railway Variables에 저장해 두시길 권장합니다.</p>
+  {% endif %}
+
+  <h3>{% if is_admin %}7{% else %}6{% endif %}. 유의사항</h3>
+  <p>본 도구는 검토 보조용입니다. 임상·규제 대상 자료인 만큼 접근 권한은 최소화하고, <b>최종 제출·판정은 CDC 참조법 회신 및 검토자 확인 후 확정</b>하십시오.</p>
+</div>
+{% endblock %}

@@ -81,9 +81,17 @@ git push -u origin main
 2. Railway가 `requirements.txt`+`Procfile`을 감지해 자동 빌드합니다(Nixpacks).
 3. **Variables** 탭에서 환경변수 추가:
    - `SECRET_KEY` = 아무 긴 랜덤 문자열(세션 서명용, 필수)
-   - `USERS_JSON` = 위에서 만든 사용자 JSON 한 줄
-4. **Settings → Networking → Generate Domain** 으로 공개 주소(`https://...up.railway.app`) 생성.
-5. 해당 주소로 접속 → 로그인 → 사용.
+   - `USERS_JSON` = 위에서 만든 사용자 JSON 한 줄(최초 시드·영구 백업용)
+   - `ADMIN_USERS` = 관리자 아이디(콤마 구분, 예: `yeomin`)
+   - (권장) `USERS_FILE` = `/data/users.json` — 관리자 화면에서 등록한 사용자를 **영구 저장**하려면 아래 Volume과 함께 설정
+4. (권장) **Settings → Volumes → New Volume**, 마운트 경로 `/data` — 이러면 관리자 화면에서 추가/변경한 사용자가 재배포 후에도 유지됩니다. Volume 없이도 동작하지만, 재배포·재시작 시 관리자 화면에서 추가한 사용자는 초기화될 수 있으니 `USERS_JSON` 백업을 병행하세요.
+5. **Settings → Networking → Generate Domain** 으로 공개 주소(`https://...up.railway.app`) 생성.
+6. 해당 주소로 접속 → 로그인 → 사용.
+
+### 관리자 · 사용자 설명서
+- 로그인 후 상단 **관리자** 메뉴(관리자 계정만)에서 사용자 아이디·비밀번호 등록·변경·삭제, 관리자 권한 지정이 가능합니다. 화면의 **USERS_JSON 백업**을 복사해 Railway `USERS_JSON`에 저장하면 영구 보존됩니다.
+- 상단 **사용자 설명서** 메뉴에 대시보드·업로드·판정기준·선택로직 사용법이 있습니다.
+- 관리자 지정: `ADMIN_USERS` 환경변수(콤마 목록). 관리자가 하나도 없으면 첫 사용자가 자동 관리자가 됩니다.
 
 헬스체크 경로는 `/healthz`로 설정되어 있습니다. 재배포는 GitHub에 push하면 자동 반영됩니다.
 

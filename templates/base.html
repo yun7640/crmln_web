@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ko"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}CRMLN 검토 대시보드{% endblock %}</title>
+<style>
+:root{--navy:#1F3A5F;--blue:#2C6E9B;--ink:#1a2330;--muted:#6b7683;--line:#d7dee6;--good:#1B7F4B;--warn:#B9770E;--crit:#C0392B;--bg:#f4f6f9}
+*{box-sizing:border-box}
+body{margin:0;font-family:'맑은 고딕','Malgun Gothic',system-ui,sans-serif;color:var(--ink);background:var(--bg)}
+header{background:var(--navy);color:#fff;display:flex;align-items:center;gap:10px;padding:10px 18px;flex-wrap:wrap}
+header h1{margin:0;font-size:15px;font-weight:800}
+header .sp{flex:1}
+header .who{font-size:12px;color:#c7d6e6}
+header a{color:#dbe6f0;font-size:12.5px;text-decoration:none;padding:5px 8px;border-radius:7px}
+header a:hover{background:rgba(255,255,255,.12);color:#fff}
+header a.logout{border:1px solid rgba(255,255,255,.4)}
+header a.home{font-weight:700;color:#fff}
+.wrap{max-width:1000px;margin:22px auto;padding:0 18px}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin-bottom:18px;box-shadow:0 2px 10px rgba(31,58,95,.05)}
+h2{font-size:16px;margin:0 0 4px;color:var(--navy)}
+h3{font-size:13.5px;margin:18px 0 8px;color:var(--blue)}
+p,li{font-size:13px;line-height:1.7;color:#2c3742}
+table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left}
+th{background:#eef2f6;font-weight:700}
+.flash{background:#eaf5ee;border:1px solid #bfe0cb;color:#1B7F4B;padding:9px 12px;border-radius:8px;margin-bottom:14px;font-size:12.5px}
+input[type=text],input[type=password]{padding:8px 10px;border:1px solid var(--line);border-radius:7px;font-size:13px;font-family:inherit}
+button,.btn{padding:8px 12px;border:0;border-radius:7px;background:var(--blue);color:#fff;font-weight:700;font-size:12.5px;cursor:pointer;font-family:inherit}
+button:hover{background:#245d84}
+button.danger{background:#c0392b}button.danger:hover{background:#a5311f}
+button.ghost{background:#eef2f6;color:var(--ink)}button.ghost:hover{background:#e0e7ee}
+.muted{color:var(--muted);font-size:11.5px}
+.pill{display:inline-block;background:#eef2f6;border:1px solid var(--line);border-radius:20px;padding:2px 9px;font-size:11px}
+.pill.admin{background:#e7effa;border-color:#b9d0ea;color:#245d84}
+code,pre{font-family:ui-monospace,Consolas,monospace;font-size:12px}
+pre{background:#0f1b2a;color:#e6eef7;padding:12px;border-radius:8px;overflow:auto;white-space:pre-wrap;word-break:break-all}
+.note{background:#fff8ec;border:1px solid #f0dcae;border-radius:8px;padding:10px 12px;font-size:12px;color:#7a5a12}
+</style></head>
+<body>
+<header>
+  <a class="home" href="{{ url_for('index') }}">CRMLN 검토 대시보드</a>
+  <div class="sp"></div>
+  <a href="{{ url_for('manual') }}">📘 사용자 설명서</a>
+  {% if is_admin %}<a href="{{ url_for('admin_home') }}">🛠 관리자</a>{% endif %}
+  <span class="who">👤 {{ user }}{% if is_admin %} · 관리자{% endif %}</span>
+  <a class="logout" href="{{ url_for('logout') }}">로그아웃</a>
+</header>
+<div class="wrap">
+  {% with messages = get_flashed_messages() %}{% if messages %}<div class="flash">{{ messages[0] }}</div>{% endif %}{% endwith %}
+  {% block content %}{% endblock %}
+</div>
+</body></html>

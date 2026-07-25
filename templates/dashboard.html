@@ -12,6 +12,8 @@ header .sp{flex:1}
 header .who{font-size:12px;color:#c7d6e6}
 header a.logout{color:#fff;font-size:12px;text-decoration:none;border:1px solid rgba(255,255,255,.4);padding:5px 10px;border-radius:7px}
 header a.logout:hover{background:rgba(255,255,255,.12)}
+header a.navlink{color:#dbe6f0;font-size:12.5px;text-decoration:none;padding:5px 8px;border-radius:7px}
+header a.navlink:hover{background:rgba(255,255,255,.12);color:#fff}
 .wrap{display:flex;height:calc(100vh - 52px)}
 .side{width:320px;min-width:320px;border-right:1px solid var(--line);background:#fff;padding:16px;overflow:auto}
 .side h2{font-size:13px;margin:0 0 6px}
@@ -31,7 +33,9 @@ iframe{border:0;width:100%;height:100%}
 <header>
   <h1>CRMLN 측정결과 검토 · 평가경향 대시보드</h1>
   <div class="sp"></div>
-  <span class="who">👤 {{ user }}</span>
+  <a class="navlink" href="{{ url_for('manual') }}">📘 사용자 설명서</a>
+  {% if is_admin %}<a class="navlink" href="{{ url_for('admin_home') }}">🛠 관리자</a>{% endif %}
+  <span class="who">👤 {{ user }}{% if is_admin %} · 관리자{% endif %}</span>
   <a class="logout" href="{{ url_for('logout') }}">로그아웃</a>
 </header>
 <div class="wrap">

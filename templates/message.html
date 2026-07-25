@@ -1,0 +1,9 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>{{ title }}</h2>
+  <p>{{ body }}</p>
+  <a class="btn" href="{{ url_for('index') }}" style="display:inline-block;margin-top:8px;text-decoration:none">대시보드로</a>
+</div>
+{% endblock %}

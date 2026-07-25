@@ -1,0 +1,56 @@
+{% extends 'base.html' %}
+{% block title %}관리자 · 사용자 관리{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>사용자 관리</h2>
+  <p class="muted">사용자 아이디·비밀번호를 등록·변경·삭제합니다. 비밀번호는 해시로만 저장되며 평문은 저장되지 않습니다.</p>
+  {% if not persistent %}
+  <div class="note">⚠ 현재 서버에 <b>영구 저장 볼륨이 설정되지 않았습니다</b>. 여기서 추가/변경한 사용자는 서버 재배포·재시작 시 사라질 수 있습니다.
+  아래 <b>사용자 설정 백업(USERS_JSON)</b>을 복사해 Railway Variables의 <code>USERS_JSON</code>에 붙여넣어 두거나, Railway에 Volume을 마운트하고 <code>USERS_FILE</code>을 설정하세요(설명서 참조).</div>
+  {% endif %}
+
+  <h3>등록된 사용자</h3>
+  <table>
+    <thead><tr><th>아이디</th><th>권한</th><th style="width:340px">작업</th></tr></thead>
+    <tbody>
+    {% for u in users %}
+      <tr>
+        <td>{{ u.username }}</td>
+        <td>{% if u.admin %}<span class="pill admin">관리자</span>{% else %}<span class="pill">일반</span>{% endif %}</td>
+        <td>
+          <form method="post" action="{{ url_for('admin_reset') }}" style="display:inline-flex;gap:4px;align-items:center">
+            <input type="hidden" name="username" value="{{ u.username }}">
+            <input type="password" name="password" placeholder="새 비밀번호" required style="width:120px">
+            <button class="ghost" type="submit">비번변경</button>
+          </form>
+          <form method="post" action="{{ url_for('admin_role') }}" style="display:inline">
+            <input type="hidden" name="username" value="{{ u.username }}">
+            {% if u.admin %}<button class="ghost" name="admin" value="" type="submit">관리자해제</button>
+            {% else %}<button class="ghost" name="admin" value="1" type="submit">관리자지정</button>{% endif %}
+          </form>
+          <form method="post" action="{{ url_for('admin_delete') }}" style="display:inline" onsubmit="return confirm('{{ u.username }} 사용자를 삭제할까요?')">
+            <input type="hidden" name="username" value="{{ u.username }}">
+            <button class="danger" type="submit">삭제</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  <h3>새 사용자 등록</h3>
+  <form method="post" action="{{ url_for('admin_add') }}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <input type="text" name="username" placeholder="아이디" required>
+    <input type="password" name="password" placeholder="비밀번호" required>
+    <label style="font-size:12.5px;display:flex;align-items:center;gap:5px"><input type="checkbox" name="admin" value="1">관리자 권한</label>
+    <button type="submit">등록</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>사용자 설정 백업 (USERS_JSON)</h2>
+  <p class="muted">아래 문자열을 복사해 Railway 서비스 → <b>Variables</b> → <code>USERS_JSON</code> 값으로 저장해 두면, 재배포 후에도 사용자 목록이 유지됩니다(영구 백업).</p>
+  <pre id="exp">{{ export }}</pre>
+  <button class="ghost" onclick="navigator.clipboard.writeText(document.getElementById('exp').textContent);this.textContent='복사됨 ✓'">클립보드로 복사</button>
+</div>
+{% endblock %}

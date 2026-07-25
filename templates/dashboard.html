@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ko"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CRMLN 검토 대시보드</title>
+<style>
+:root{--navy:#1F3A5F;--blue:#2C6E9B;--ink:#1a2330;--muted:#6b7683;--line:#d7dee6;--good:#1B7F4B;--warn:#B9770E}
+*{box-sizing:border-box}
+body{margin:0;font-family:'맑은 고딕','Malgun Gothic',system-ui,sans-serif;color:var(--ink);background:#f4f6f9}
+header{background:var(--navy);color:#fff;display:flex;align-items:center;gap:14px;padding:10px 18px}
+header h1{margin:0;font-size:15px;font-weight:800}
+header .sp{flex:1}
+header .who{font-size:12px;color:#c7d6e6}
+header a.logout{color:#fff;font-size:12px;text-decoration:none;border:1px solid rgba(255,255,255,.4);padding:5px 10px;border-radius:7px}
+header a.logout:hover{background:rgba(255,255,255,.12)}
+.wrap{display:flex;height:calc(100vh - 52px)}
+.side{width:320px;min-width:320px;border-right:1px solid var(--line);background:#fff;padding:16px;overflow:auto}
+.side h2{font-size:13px;margin:0 0 6px}
+.side p.sub{font-size:11.5px;color:var(--muted);margin:0 0 12px;line-height:1.6}
+.drop{border:2px dashed #b9c6d4;border-radius:10px;padding:18px;text-align:center;font-size:12.5px;color:var(--muted);cursor:pointer;transition:.15s}
+.drop.drag{border-color:var(--blue);background:#eef5fb;color:var(--blue)}
+.btn{display:block;width:100%;margin-top:12px;padding:10px;border:0;border-radius:8px;background:var(--blue);color:#fff;font-weight:700;font-size:13px;cursor:pointer}
+.btn:disabled{opacity:.5;cursor:default}
+.status{margin-top:12px;font-size:12px;line-height:1.7}
+.status .ok{color:var(--good)} .status .er{color:#c0392b}
+.pill{display:inline-block;background:#eef2f6;border:1px solid var(--line);border-radius:20px;padding:2px 9px;font-size:11px;margin:2px 3px 0 0}
+main{flex:1;position:relative}
+iframe{border:0;width:100%;height:100%}
+.note{font-size:10.5px;color:var(--muted);margin-top:14px;line-height:1.6;border-top:1px solid var(--line);padding-top:10px}
+</style></head>
+<body>
+<header>
+  <h1>CRMLN 측정결과 검토 · 평가경향 대시보드</h1>
+  <div class="sp"></div>
+  <span class="who">👤 {{ user }}</span>
+  <a class="logout" href="{{ url_for('logout') }}">로그아웃</a>
+</header>
+<div class="wrap">
+  <aside class="side">
+    <h2>측정 엑셀 업로드 → 자동 검토</h2>
+    <p class="sub">표준 CRMLN 측정지(<b>결과정리</b> 시트 포함) .xlsx를 올리면 선택(채택 2반복) 하이라이트와 <b>2026.7 측정결과 검토</b> 시트가 자동 생성된 파일을 내려받습니다.</p>
+    <div class="drop" id="drop">여기로 .xlsx 파일을 끌어놓거나<br>클릭하여 선택</div>
+    <input type="file" id="file" accept=".xlsx,.xlsm" style="display:none">
+    <button class="btn" id="go" disabled>검토 파일 생성·다운로드</button>
+    <div class="status" id="status"></div>
+    <div class="note">
+      판정 기준(member): NIST/TC ±1%, BF·LDL ±2%, HDL ±1 mg/dL.<br>
+      선택: 종합(BF+HDL 상대편차·균형), BF·HDL·LDL 동일 index 잠금. QC·Control 미제출.<br>
+      ※ 최종 제출·판정은 CDC 회신 및 검토자 확인 후 확정.
+    </div>
+  </aside>
+  <main>
+    <iframe src="{{ url_for('view_dashboard') }}" title="CRMLN 대시보드"></iframe>
+  </main>
+</div>
+<script>
+const drop=document.getElementById('drop'),file=document.getElementById('file'),go=document.getElementById('go'),status=document.getElementById('status');
+let chosen=null;
+function setFile(f){chosen=f;go.disabled=!f;drop.innerHTML=f?('📄 '+f.name):'여기로 .xlsx 파일을 끌어놓거나<br>클릭하여 선택';status.innerHTML='';}
+drop.onclick=()=>file.click();
+file.onchange=e=>setFile(e.target.files[0]);
+['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('drag');}));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('drag');}));
+drop.addEventListener('drop',e=>{if(e.dataTransfer.files[0])setFile(e.dataTransfer.files[0]);});
+go.onclick=async()=>{
+  if(!chosen)return;
+  go.disabled=true;status.innerHTML='처리 중…';
+  const fd=new FormData();fd.append('file',chosen);
+  try{
+    const r=await fetch('{{ url_for("review") }}',{method:'POST',body:fd});
+    if(!r.ok){const j=await r.json().catch(()=>({error:'오류'}));status.innerHTML='<span class="er">✗ '+(j.error||'실패')+'</span>';go.disabled=false;return;}
+    const sum=JSON.parse(r.headers.get('X-Review-Summary')||'{}');
+    const blob=await r.blob();const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');a.href=url;a.download=(chosen.name.replace(/\.(xlsx|xlsm)$/i,''))+'_검토.xlsx';a.click();URL.revokeObjectURL(url);
+    status.innerHTML='<span class="ok">✓ 완료 · 다운로드됨</span><br>'+
+      '<span class="pill">검체 '+(sum.samples||0)+'</span>'+
+      '<span class="pill">선택셀 '+(sum.painted||0)+'</span>'+
+      '<span class="pill">QC '+(sum.qc_rows||0)+'</span>'+
+      '<span class="pill" style="color:#c0392b">member 초과 '+(sum.member_exceed||0)+'</span>';
+  }catch(err){status.innerHTML='<span class="er">✗ 네트워크 오류</span>';}
+  go.disabled=false;
+};
+</script>
+</body></html>

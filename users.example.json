@@ -1,0 +1,4 @@
+{
+  "yeomin": "pbkdf2:sha256:600000$REPLACE_WITH_REAL_HASH",
+  "reviewer1": "pbkdf2:sha256:600000$REPLACE_WITH_REAL_HASH"
+}

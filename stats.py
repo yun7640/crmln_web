@@ -93,6 +93,8 @@ def bias_summary(store):
                     'exceed': bool(m is not None and abs(m) > lim),
                 }
             if block:
+                for b in block.values():
+                    b['reference'] = bool(s.get('reference'))
                 out.setdefault(label, {})[mode] = block
     return out
 
@@ -130,6 +132,7 @@ def precision(store):
                 'n_pairs': len(diffs),
                 'day_diff_mean': _r(_mean(diffs)),
                 'day_diff_max': _r(max(diffs)) if diffs else None,
+                'reference': bool(s.get('reference')),
             }
             out.setdefault(label, {})[mode] = block
     return out
@@ -154,15 +157,22 @@ def drift(store):
 
     ★ UC와 DCM은 서로 다른 측정절차이므로 **절대 합치지 않는다.**
       (같은 HDL이라도 UC의 β-정량 HDL과 DCM의 HDL은 다른 값이다)
+    ★ 참고용 소급 자료(reference=True)는 **추세 계산에서 제외한다.**
+      과거 자료는 참고용이며 측정 시점·조건 확인이 불완전할 수 있어 추세 판단 근거로 쓰지 않는다
+      (인수인계 §10 T1, 사용자 확정 사항). 제외 후 회차가 3개 미만이면 slope=None.
     x축은 회차 순서(0,1,2…). 회차 3개 미만이면 slope=None으로 두고 추세를 판단하지 않는다.
     |slope| 가 허용한계의 25%/회차를 넘으면 flag — **임의 임계값이며 경고용일 뿐 판정 기준이 아니다.**
     """
     series = {}   # {mode: {analyte: {label: mean_bias}}}
+    excluded = []
     for label in sorted(store, key=rounds._key):
         r = store[label]
         for mode in ('uc', 'dcm'):
             s = r.get(mode)
             if not s:
+                continue
+            if s.get('reference') or r.get('reference'):
+                excluded.append('%s/%s' % (label, mode.upper()))
                 continue
             per = {}
             for q in s.get('qc', []):
@@ -193,6 +203,8 @@ def drift(store):
                 'unit': unit,
                 'flag': bool(sl is not None and abs(sl) > 0.25 * lim),
             }
+    if excluded:
+        out['_excluded_reference'] = sorted(set(excluded))
     return out
 
 
@@ -241,10 +253,12 @@ def payload():
     store = rounds.load_store()
     labels = sorted(store, key=rounds._key)
     bs = bias_summary(store)
+    ref = [l for l in labels if rounds.is_reference(store.get(l) or {})]
     return {
         'backend': rounds.backend(),
         'round_labels': labels,
         'n_rounds': len(labels),
+        'reference_labels': ref,
         'bias_summary': bs,
         'precision': precision(store),
         'drift': drift(store),
@@ -252,4 +266,6 @@ def payload():
         'limits': {k: {'limit': v[0], 'unit': v[1]} for k, v in LIMITS.items()},
         'note': ('모니터링·진단용 통계입니다. 반복측정 채택은 정밀도/QC 기반 로직으로만 결정되며 '
                  '이 통계는 채택에 관여하지 않습니다. 최종 판정은 CDC 참조법 회신 및 검토자 확인 후 확정합니다.'),
+        'note_reference': ('참고(소급) 표시가 붙은 회차는 과거 자료를 소급 누적한 것으로 참고용입니다. '
+                           '드리프트(추세) 계산에서는 제외되며, 제출·판정 근거로 사용하지 마십시오.'),
     }

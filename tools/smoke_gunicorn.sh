@@ -150,6 +150,23 @@ check('통계 payload 키 완비',
       sorted(S))
 check('방법론 경고문 포함', '판정' in (S.get('note') or ''), S.get('note'))
 
+print('[G6] T1 소급 미리보기 — 실 gunicorn에서 한글 파일명 + 한글 응답')
+r = post_file('/rounds/preview', '2025.1_과거_측정결과.xlsx', uc, {})
+check('/rounds/preview 200', r.status == 200, r.status)
+latin1_ok(r, '/rounds/preview')
+P = json.loads(r.read().decode('utf-8'))
+check('저장하지 않음(saved=False)', P.get('saved') is False, P.get('saved'))
+check('한글 파일명에서 라벨 추정', P.get('suggested_label') == '2025.1', P.get('suggested_label'))
+check('한글 안내문 복원', '확정' in (P.get('note') or ''), P.get('note'))
+
+try:
+    post_file('/rounds/add', 'a.xlsx', uc, {'label': '2025.1', 'reference': '1'})
+    check('confirm 없는 소급 저장 거부', False, '400이어야 함')
+except urllib.error.HTTPError as e:
+    check('confirm 없는 소급 저장 거부 400', e.code == 400, e.code)
+    check('거부 응답도 헤더 latin-1 안전', all(
+        (str(v).encode('latin-1', 'strict') or True) for _k, v in e.headers.items()), '')
+
 print('\n=== %d개 검사 중 실패 %d ===' % (n[0], len(fails)))
 sys.exit(1 if fails else 0)
 PY

@@ -129,16 +129,75 @@ def rounds_stats():
                               mimetype='application/json')
 
 
+def _truthy(v):
+    return str(v or '').strip().lower() in ('1', 'true', 'on', 'yes')
+
+
+@app.route('/rounds/preview', methods=['POST'])
+@login_required
+def rounds_preview():
+    """과거 회차 소급 누적(T1) 1단계 — **저장하지 않고** 미리보기만 반환.
+
+    파일명·시트명에서 회차 라벨 후보를 추정하되 자동 저장하지 않는다. 화면에서 사용자가
+    라벨을 확인·확정한 뒤 /rounds/add 로 저장한다(인수인계 §10 T1).
+    함께 반환하는 것: 기존 라벨 존재 여부, 시드↔소급 계산 값 대조, 연도 제한 판정."""
+    f = request.files.get('file')
+    if not f or not f.filename.lower().endswith(('.xlsx', '.xlsm')):
+        return {'error': '.xlsx 측정 파일을 첨부하세요.'}, 400
+    data = f.read()
+    try:
+        summary = review_engine.summarize_round(data)
+    except ValueError as e:
+        return {'error': str(e)}, 400
+    except Exception as e:
+        return {'error': '요약 중 오류: %s' % e}, 500
+    try:
+        import openpyxl, io as _io
+        sheetnames = openpyxl.load_workbook(_io.BytesIO(data), read_only=True).sheetnames
+    except Exception:
+        sheetnames = []
+    cands = rounds.infer_labels(f.filename, sheetnames)
+    picked = (request.form.get('label') or '').strip() or (cands[0]['label'] if cands else '')
+    date_certain = _truthy(request.form.get('date_certain'))
+    status = rounds.label_status(picked) if picked else None
+    ok_year, year_msg = rounds.year_guard(picked, date_certain=date_certain) if picked else (False, '')
+    return app.response_class(json.dumps({
+        'saved': False,
+        'filename': f.filename,
+        'sheetnames': sheetnames,
+        'mode': summary.get('mode'),
+        'n_samples': summary.get('n_samples'),
+        'n_qc': summary.get('n_qc'),
+        'n_exceed': summary.get('n_exceed'),
+        'candidates': cands,
+        'suggested_label': picked,
+        'status': status,
+        'year_ok': ok_year,
+        'year_message': year_msg,
+        'min_year': rounds.min_backfill_year(),
+        'seed_compare': rounds.seed_compare(picked, summary) if picked else None,
+        'summary': summary,
+        'note': ('추정 라벨은 참고용입니다. 반드시 사용자가 회차를 확인·확정한 뒤 저장하십시오. '
+                 '시드 값과 소급 계산 값이 다르면 덮어쓰지 않고 병기합니다.'),
+    }, ensure_ascii=False), mimetype='application/json')
+
+
 @app.route('/rounds/add', methods=['POST'])
 @login_required
 def rounds_add():
-    """측정 파일 업로드 → 회차 저장(누적) + 제출 검토 파일 생성·반환(한 번에)."""
+    """측정 파일 업로드 → 회차 저장(누적) + 제출 검토 파일 생성·반환(한 번에).
+
+    reference=1 이면 과거 자료 소급 누적(참고용)으로 저장하고, 검토 엑셀은 만들지 않는다."""
     f = request.files.get('file')
     label = (request.form.get('label') or '').strip()
+    reference = _truthy(request.form.get('reference'))
+    date_certain = _truthy(request.form.get('date_certain'))
     if not f or not f.filename.lower().endswith(('.xlsx', '.xlsm')):
         return {'error': '.xlsx 측정 파일을 첨부하세요.'}, 400
     if not label:
         return {'error': '회차 라벨(예: 2026.7)을 입력하세요.'}, 400
+    if reference and not _truthy(request.form.get('confirm')):
+        return {'error': '소급 저장은 회차 라벨 확인 후에만 가능합니다(확인 체크 필요).'}, 400
     data = f.read()
     try:
         summary = review_engine.summarize_round(data)
@@ -147,9 +206,19 @@ def rounds_add():
     except Exception as e:
         return {'error': '요약 중 오류: %s' % e}, 500
     ok, msg = rounds.add_round(label, summary, user=session.get('user', ''),
-                               date=(request.form.get('date') or '').strip())
+                               date=(request.form.get('date') or '').strip(),
+                               reference=reference, date_certain=date_certain)
     if not ok:
-        return {'error': msg}, 500
+        return {'error': msg}, 400 if reference else 500
+    if reference:
+        # 소급은 누적 저장이 목적 — 검토 엑셀은 만들지 않는다(사용자 확정 사항).
+        cmp_ = rounds.seed_compare(label, summary)
+        return app.response_class(json.dumps({
+            'stored': True, 'reference': True, 'label': rounds.canon_label(label),
+            'mode': summary['mode'], 'message': msg, 'seed_compare': cmp_,
+            'warn': ('시드 값과 다른 항목이 %d개 있습니다. 덮어쓰지 않고 병기합니다.' % cmp_['n_diff'])
+                    if cmp_['n_diff'] else '',
+        }, ensure_ascii=False), mimetype='application/json')
     # 제출 검토 파일도 함께 생성해 반환
     try:
         out_bytes, rsum = review_engine.process(data)

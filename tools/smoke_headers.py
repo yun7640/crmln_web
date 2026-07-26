@@ -168,6 +168,121 @@ def main():
           dp.get('total') == sum((dp.get('counts') or {}).values()), dp)
     check('통계 note에 방법론 경고 포함', '판정' in (S.get('note') or ''), S.get('note'))
 
+    print('[6c] T1 과거 회차 소급 누적 — 라벨 추정·연도 제한·시드 병기')
+    import rounds as R  # noqa: E402
+    # (1) 라벨 자동 추정: 파일명·시트명에서만 추정하며 저장하지 않는다
+    cands = R.infer_labels('2025.1_HDLC_UC_측정결과.xlsx', ['결과정리', '2025년 1월 검토'])
+    labs = [x['label'] for x in cands]
+    check('파일명에서 라벨 추정', '2025.1' in labs, cands)
+    check('추정 근거(source)를 함께 반환', all(x.get('source') and x.get('matched') for x in cands), cands)
+    check('상/하반기 표기도 추정', '2024.7' in [x['label'] for x in R.infer_labels('2024 하반기.xlsx')],
+          R.infer_labels('2024 하반기.xlsx'))
+    check('추정 불가 파일은 빈 목록', R.infer_labels('측정결과.xlsx', ['결과정리']) == [],
+          R.infer_labels('측정결과.xlsx', ['결과정리']))
+    check('13월 등 잘못된 월은 추정 안 함', R.infer_labels('2025.13_x.xlsx') == [],
+          R.infer_labels('2025.13_x.xlsx'))
+    check('숫자 오인 방지(2025.1234)', R.infer_labels('2025.1234.xlsx') == [],
+          R.infer_labels('2025.1234.xlsx'))
+    check('YYYY-MM-DD도 반기로 정규화',
+          [x['label'] for x in R.infer_labels('2024-07-15.xlsx')] == ['2024.7'],
+          R.infer_labels('2024-07-15.xlsx'))
+    check('같은 라벨 여러 근거 → n_sources 집계',
+          all(x['n_sources'] == 2 for x in R.infer_labels('2025.1.xlsx', ['2025년 1월'])),
+          R.infer_labels('2025.1.xlsx', ['2025년 1월']))
+
+    # Postgres 경로 재현 — db.rounds_load()는 레코드 최상위에 reference를 넣지 않고
+    # 요약(data JSONB) 안에만 넣는다. 그 형태에서도 참고용 판정이 되어야 한다.
+    import stats as _S
+    pg_like = {'2024.1': {'label': '2024.1', 'by': {'uc': 'admin'}, 'uc': {
+        'mode': 'uc', 'reference': True, 'n_qc': 1, 'n_exceed': 0, 'n_samples': 1,
+        'qc': [{'analyte': 'TC', 'biaspct': 0.2, 'biasmgdl': None, 'name': 'NIST', 'day': 1, 'ok': True}],
+        'samples': [{'name': 'CS01', 'day': 1, 'drop': 2, 'keep': [1, 3],
+                     'BF': 1, 'HDL': 50, 'LDL': 1, 'cvL': 0.3}]}}}
+    check('Postgres 형태(요약 안에만 reference)에서도 참고용 인식',
+          R.is_reference(pg_like['2024.1']) is True)
+    check('일반 회차는 참고용 아님', R.is_reference({'uc': {'mode': 'uc'}}) is False)
+    _d = _S.drift(pg_like)
+    check('Postgres 형태에서도 드리프트가 참고용 제외',
+          _d.get('_excluded_reference') == ['2024.1/UC'], _d)
+    check('참고용만 있으면 추세 계열이 비어야 함', set(_d) == {'_excluded_reference'}, sorted(_d))
+    check('bias_summary 행에 reference 표시',
+          _S.bias_summary(pg_like)['2024.1']['uc']['TC']['reference'] is True)
+
+    # (2) 최근 3년 제한 — 시점 불확실 시 min_backfill_year 이전은 거부
+    lo = R.min_backfill_year()
+    check('최근 3년 하한 = 올해-2', lo == __import__('datetime').date.today().year - 2, lo)
+    ok_old, msg_old = R.year_guard('%d.1' % (lo - 1), date_certain=False)
+    check('시점 불확실 + 3년 초과 과거 → 거부', ok_old is False and str(lo) in msg_old, msg_old)
+    ok_cert, _ = R.year_guard('%d.1' % (lo - 1), date_certain=True)
+    check('시점 확인됨 체크 시 허용', ok_cert is True)
+    check('범위 내 연도는 허용', R.year_guard('%d.7' % lo)[0] is True)
+    check('미래 연도 거부', R.year_guard('2099.1')[0] is False)
+
+    # (3) /rounds/preview — 저장하지 않는다
+    before = set(R.load_store())
+    with open(uc_path, 'rb') as f:
+        r = c.post('/rounds/preview', data={'file': (f, '2025.1_과거측정.xlsx')},
+                   content_type='multipart/form-data')
+    check('/rounds/preview 200', r.status_code == 200, r.data[:200])
+    assert_latin1_headers(r, '/rounds/preview')
+    P = r.get_json(silent=True) or {}
+    check('preview saved=False', P.get('saved') is False, P.get('saved'))
+    check('preview는 저장하지 않음', set(R.load_store()) == before, sorted(set(R.load_store()) - before))
+    check('preview 추정 라벨 제시', P.get('suggested_label') == '2025.1', P.get('suggested_label'))
+    check('preview 기존 라벨 상태 포함', isinstance(P.get('status'), dict) and 'exists' in P['status'], P.get('status'))
+    check('preview 시드 대조 포함', isinstance(P.get('seed_compare'), dict), P.get('seed_compare'))
+    check('preview note에 사용자 확인 요구 명시', '확정' in (P.get('note') or ''), P.get('note'))
+
+    # (4) 확인(confirm) 없이는 소급 저장 불가
+    with open(uc_path, 'rb') as f:
+        r = c.post('/rounds/add', data={'file': (f, 'a.xlsx'), 'label': '2025.1', 'reference': '1'},
+                   content_type='multipart/form-data')
+    check('confirm 없는 소급 저장 거부 400', r.status_code == 400, r.status_code)
+    with open(uc_path, 'rb') as f:
+        r = c.post('/rounds/add', data={'file': (f, 'a.xlsx'), 'label': '%d.1' % (lo - 1),
+                                        'reference': '1', 'confirm': '1'},
+                   content_type='multipart/form-data')
+    check('3년 초과 과거 소급 거부 400', r.status_code == 400, r.data[:200])
+
+    # (5) 정상 소급 저장 — 참고용 표시 + 검토 엑셀 미생성(JSON 응답)
+    with open(uc_path, 'rb') as f:
+        r = c.post('/rounds/add', data={'file': (f, 'a.xlsx'), 'label': '%d.1' % lo,
+                                        'reference': '1', 'confirm': '1'},
+                   content_type='multipart/form-data')
+    check('소급 저장 200', r.status_code == 200, r.data[:200])
+    assert_latin1_headers(r, '/rounds/add(소급)')
+    J = r.get_json(silent=True) or {}
+    check('소급 응답은 JSON(검토 엑셀 미생성)', J.get('stored') is True and J.get('reference') is True, J)
+    st = R.load_store().get('%d.1' % lo) or {}
+    check('저장 레코드에 reference 표시', R.is_reference(st) is True, st.get('reference'))
+
+    # (6) 시드 값 보존 — 덮어쓰지 않고 병기
+    P2 = R.dashboard_payload()
+    seedpts = (P2['qc_bias']['NIST'] or {}).get('points_seed') or {}
+    seed_raw = (R.load_seed()['qc_bias']['NIST'] or {}).get('points') or {}
+    check('시드 points_seed가 원본과 동일(덮어쓰기 없음)',
+          all(abs(seedpts[k] - seed_raw[k]) < 1e-9 for k in seed_raw), 'seed 변형됨')
+    check('업로드 값은 points_upload에 별도 보관',
+          isinstance(P2['qc_bias']['NIST'].get('points_upload'), dict), P2['qc_bias']['NIST'].keys())
+    check('conflicts 목록 존재', isinstance(P2.get('conflicts'), list), type(P2.get('conflicts')))
+    check('payload에 reference_labels', '%d.1' % lo in (P2.get('reference_labels') or []),
+          P2.get('reference_labels'))
+    check('payload note_seed에 병기 원칙 명시', '덮어쓰지' in (P2.get('note_seed') or ''), P2.get('note_seed'))
+    for cf in (P2.get('conflicts') or []):
+        check('conflict 항목에 시드·업로드 값 모두 포함',
+              cf.get('seed') is not None and cf.get('upload') is not None, cf)
+        break
+
+    # (7) 참고용 소급은 드리프트(추세) 계산에서 제외
+    S2 = json.loads(c.get('/rounds/stats').data.decode('utf-8'))
+    check('stats에 reference_labels 노출', '%d.1' % lo in (S2.get('reference_labels') or []),
+          S2.get('reference_labels'))
+    ex = (S2.get('drift') or {}).get('_excluded_reference') or []
+    check('드리프트에서 참고용 소급 제외', any(('%d.1' % lo) in e for e in ex), ex)
+    check('stats note_reference에 참고용 경고', '참고용' in (S2.get('note_reference') or ''),
+          S2.get('note_reference'))
+    c.post('/rounds/delete', data={'label': '%d.1' % lo, 'ajax': '1'})
+
     print('[7] /rounds/delete (관리자, ajax)')
     r = c.post('/rounds/delete', data={'label': '2026.7', 'mode': 'dcm', 'ajax': '1'})
     check('/rounds/delete ajax 200', r.status_code == 200, r.data[:200])

@@ -65,6 +65,7 @@ Flask 웹앱. 로그인 후 (1) CRMLN 대시보드 열람, (2) 측정 엑셀 업
 app.py                     Flask 라우트(로그인·세션·업로드·회차·관리자)
 review_engine.py           엑셀 처리: UC(β-정량)·DCM 자동감지, 선택 로직, 검토시트 생성, summarize_round
 rounds.py                  회차 누적 저장소(Postgres/파일) + 과거 시드 병합 + dashboard_payload + 라벨 정규화(canon_label)
+                           + T1 소급 누적: infer_labels·label_status·seed_compare·year_guard·is_reference
 db.py                      Postgres 계층(app_users, app_rounds) + 연결 실패 시 폴백
 auth.py                    사용자 저장소·로그인(Postgres/파일, 관리자 CRUD)
 templates/
@@ -107,7 +108,10 @@ HANDOVER_인수인계.md        (이 문서)
 - `/review` (POST) — 단발 업로드 → 검토파일 반환(누적 저장 안 함). 헤더 `X-Review-Summary`.
 - `/rounds` — cumulative.html(전체 페이지). `/rounds/data` — 누적 payload JSON(+`is_admin`).
 - `/rounds/stats` — 누적 통계 JSON(stats.py). 모니터링·진단용, 채택 로직 비관여.
+- `/rounds/preview` (POST) — **과거 회차 소급 1단계. 저장하지 않음.** 라벨 후보(추정 근거 포함)·기존 라벨 상태·
+  시드↔소급 대조·연도 제한 판정을 JSON으로 반환. 저장은 사용자가 라벨 확정 후 `/rounds/add`로.
 - `/rounds/add` (POST) — 업로드 → **summarize_round로 누적 저장 + process로 검토파일 반환**. 헤더 `X-Round-Result`.
+  `reference=1`(소급)이면 `confirm=1` 필수, 연도 제한 적용, 검토 엑셀 없이 JSON만 반환.
 - `/rounds/delete` (POST, admin) — 회차/모드 삭제. `ajax=1`이면 JSON 반환, 아니면 redirect.
 - `/rounds/export` `/rounds/import` (admin) — 누적 백업 JSON.
 - `/admin/*` (admin) — 사용자 CRUD.
@@ -210,6 +214,18 @@ HANDOVER_인수인계.md        (이 문서)
   · 검증 중 확인: `drift`를 UC/DCM 합산하면 같은 라벨이 중복되어 기울기가 왜곡됨 → **모드별 분리**로 수정.
   · Postgres `round()`와 Python `round()`(banker's)의 3째 자리 ±0.001 차이는 SQL 파일에 주석으로 명시.
 
+- **v12 (2026-07-26): T1 완료 — 과거 회차 소급 누적 + 시드 덮어쓰기 버그 수정.**
+  `rounds.py`에 `infer_labels`·`label_status`·`seed_compare`·`year_guard`·`min_backfill_year`·`is_reference` 신설,
+  `add_round(reference=, date_certain=)` 확장, `dashboard_payload`가 시드를 덮어쓰지 않도록 수정
+  (`points_seed`/`points_upload`/`conflicts` 분리). `app.py`에 `/rounds/preview` 추가.
+  `stats.py`는 참고용 소급을 드리프트에서 제외하고 각 행에 `reference` 표시.
+  ⑥탭에 소급 누적 패널 + 시드↔소급 대조표 + 경향 그래프 두 계열 병기.
+  · **사용자 확정 정책:** 과거 자료는 **참고용**으로만 누적. 측정 시점이 불확실하면 **최근 3년만** 소급 적용.
+  · 검증: `smoke_headers.py` **104/104**, `smoke_gunicorn.sh` **25/25** 통과(실 gunicorn).
+    Postgres 저장 형태(레코드 최상위에 `reference`가 없고 요약 JSONB 안에만 있는 형태)를 재현해
+    참고용 판정·드리프트 제외가 동작함을 확인. `smoke_tab6.py`는 여전히 SKIP(아래 §11 참조) —
+    `node --check` 문법 검증 + ⑥탭 DOM·문구 12종 정적 확인으로 대체.
+
 ## 10. 다음 작업 계획 (2026-07-26 사용자 확정 · 우선순위 순)
 
 > 아래 T0–T4는 **사용자가 직접 선택한 다음 작업 목록**입니다. on-computer 세션에서 위에서부터 진행하고,
@@ -217,11 +233,21 @@ HANDOVER_인수인계.md        (이 문서)
 
 - ~~**T0. 리포 위생**~~ — **완료(2026-07-26, `17b6602`).** `.gitignore` + `HANDOVER_인수인계.md` 커밋.
   이 문서의 단일 원본은 이제 GitHub 리포입니다.
-- **T1. 과거 회차 소급 누적** — 2023.1–2026.7은 현재 `assets/history_seed.json`의 **경향 시드만** 있고 상세 제출표가 없음.
-  과거 측정 원본 엑셀을 업로드하면 `summarize_round`로 상세 제출표까지 소급 누적되도록 지원.
-  · 회차 라벨은 파일명/시트명에서 추정하되 **반드시 사용자 확인 후 확정**(자동 추정만으로 저장 금지).
-  · `canon_label`로 정규화되므로 중복 생성 위험은 낮으나, 저장 전 기존 라벨 존재 여부를 표시할 것.
-  · 시드 값과 소급 계산 값이 다를 경우 **덮어쓰지 말고 병기·차이 표시**(§0 원칙: 유리한 값 선택 금지).
+- ~~**T1. 과거 회차 소급 누적**~~ — **완료(2026-07-26).** ⑥탭 "과거 회차 소급 누적" 패널 + `/rounds/preview`.
+  · **2단계 확정 절차** — ① 파일 업로드 → `/rounds/preview`가 **저장하지 않고** 라벨 후보·기존 라벨 존재 여부·
+    시드 대조를 반환 → ② 사용자가 라벨을 확정하고 확인 체크 → `/rounds/add?reference=1&confirm=1`로 저장.
+    `confirm` 없이는 서버가 400으로 거부하므로 **자동 추정만으로는 절대 저장되지 않음**.
+  · **라벨 자동 추정**(`rounds.infer_labels`) — 파일명·시트명에서 `YYYY.M` / `YYYY년 M월` / `YYYY 상·하반기` 패턴을
+    찾아 **근거(어느 파일명·시트명의 어느 문자열)와 함께** 제시. 13월·`2025.1234` 같은 오인은 걸러냄. 추정 실패 시 직접 입력.
+  · **참고용 원칙**(2026-07-26 사용자 확정) — 소급 저장분은 `reference=True`로 표시되고 화면에 "참고용 소급" 배지가 붙음.
+    **`stats.drift`(추세) 계산에서 자동 제외**되며 `bias_summary`·`precision` 행에도 참고 표시가 실림.
+  · **최근 3년 제한**(사용자 확정) — 측정 시점이 불확실하면 `min_backfill_year()`(올해−2년) 이후 자료만 소급 가능.
+    그 이전은 "측정 시점이 문서로 확인됨" 체크(`date_certain`)를 해야 통과. 미래 연도는 거부.
+  · **시드 덮어쓰기 버그 수정** — 기존 `dashboard_payload()`는 업로드 값으로 시드 `qc_bias` 점을 **덮어쓰고 있었음**(§0 위반).
+    이제 `points_seed`(시드 원본)와 `points_upload`(소급 계산)를 분리 보관하고, 차이가 나면 `conflicts`에 담아
+    ⑥탭 "시드 ↔ 소급 계산값 대조" 표에 **병기**. 경향 그래프도 실선(시드)·점선△(소급) 두 계열로 표시.
+    어느 쪽도 자동 채택하지 않음.
+  · 소급 업로드는 검토 엑셀을 만들지 않고 JSON만 반환(사용자 확정) — 여러 회차를 연속으로 넣기 쉬움.
 - ~~**T2. `app_rounds.data`(JSONB) 통계 분석**~~ — **완료(2026-07-26).** `stats.py` + `/rounds/stats` + ⑥탭 하위 섹션.
   · **`stats.py`** — `rounds.load_store()`에서 읽으므로 **Postgres·파일 폴백 양쪽에서 동작**.
     ① `bias_summary` 회차·모드·분석물질별 평균/SD/범위 + **한계 대비 마진**(=|평균bias|÷한계, 1.0 초과 시 초과)
@@ -251,6 +277,10 @@ HANDOVER_인수인계.md        (이 문서)
 
 ### 진행 중/기타
 - 중복 회차 라벨(2026-07 / 2026.07 / 2026-07-01) 정리는 사용자가 ⑥ 탭 삭제표에서 수행, `2026.7`만 유지.
+- **T0–T4 전부 완료.** 남은 사용자 조치: ① GitHub Desktop에서 Push, ② Drive `crmln-app` 폴더 삭제(T3),
+  ③ 배포 후 ⑥탭 소급 패널·대조표 실제 렌더 확인(Playwright 미검증 구간).
+- 소급 누적 실제 사용 시: 과거 측정 원본 엑셀에 `결과정리` 시트가 있어야 `summarize_round`가 읽습니다.
+  시트명이 다르면 파일을 열어 시트명을 `결과정리`로 맞춘 뒤 올리십시오.
 
 ---
 

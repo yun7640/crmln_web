@@ -185,8 +185,23 @@ td .st,.st{display:inline-flex;align-items:center;gap:4px;font-weight:700;font-s
   </div>
   <div class="cum-stat" id="cumStat"></div>
 
+  <p class="panel-title" style="margin-top:16px">과거 회차 소급 누적 <span class="cum-badge">참고용</span></p>
+  <p class="cum-legend cum-warn">과거 측정 원본 엑셀을 올려 <b>상세 제출표까지 소급 누적</b>합니다.
+    ① 소급 자료는 <b>참고용</b>이며 제출·판정 근거로 사용하지 않습니다(드리프트 추세 계산에서 자동 제외).
+    ② 회차 라벨은 파일명·시트명에서 <b>추정해 제시할 뿐</b>이며, 사용자가 확인·확정해야만 저장됩니다.
+    ③ 측정 시점이 불확실한 자료는 <b>최근 3년(<span id="bfMinYear">—</span>년 이후)</b>만 소급 적용합니다.
+    ④ 시드(과거 이력) 값과 소급 계산 값이 다르면 <b>덮어쓰지 않고 병기</b>합니다.</p>
+  <div class="cum-up">
+    <div class="cum-drop" id="bfDrop">과거 측정 .xlsx 끌어놓기 / 클릭</div>
+    <input type="file" id="bfFile" accept=".xlsx,.xlsm" style="display:none">
+    <button class="cum-btn" id="bfScan" disabled>미리보기 · 라벨 추정</button>
+  </div>
+  <div class="cum-stat" id="bfStat"></div>
+  <div id="bfPreview"></div>
+
   <p class="panel-title" style="margin-top:14px">QC · Control bias 경향</p>
-  <p class="cum-legend">점선=CRMLN member 허용 한계. 회차별 관리물질 평균 bias(내부 QC 정확도·측정지 기반).</p>
+  <p class="cum-legend">점선=CRMLN member 허용 한계. 회차별 관리물질 평균 bias(내부 QC 정확도·측정지 기반).
+    실선=<b>시드(과거 이력)</b>, 성긴 점선 △=<b>업로드·소급 계산값</b>. 두 값이 다르면 아래 대조표에 병기하며 어느 쪽도 자동 채택하지 않습니다.</p>
   <div class="cum-grid2">
     <div><p class="panel-sub" style="font-weight:700">NIST(TC)·BF (±1%)</p><div class="cum-chartbox"><canvas id="cum_tcbf"></canvas></div></div>
     <div><p class="panel-sub" style="font-weight:700">HDL·LDL control (±2%)</p><div class="cum-chartbox"><canvas id="cum_hdlldl"></canvas></div></div>
@@ -199,6 +214,7 @@ td .st,.st{display:inline-flex;align-items:center;gap:4px;font-weight:700;font-s
     <div><p class="panel-sub" style="font-weight:700">HDLC-DCM bias (mg/dL, ±1.0)</p><div class="cum-chartbox"><canvas id="cum_dcm"></canvas></div></div>
   </div>
 
+  <div id="cumConflict"></div>
   <div id="cumManage"></div>
 
   <p class="panel-title" style="margin-top:16px">회차별 CRMLN 제출 결과 (선택 2/3)</p>
@@ -673,15 +689,20 @@ buildHero();buildQCTable();buildPrecTable();buildEvalTable();renderAll();
 
   function render(DATA){
     destroyCharts();
+    var bm=document.getElementById('bfMinYear');
+    if(bm&&DATA.backfill&&DATA.backfill.min_year)bm.textContent=DATA.backfill.min_year;
     var surv=DATA.surveys||[];
-    mk('cum_tcbf',{type:'line',data:{labels:surv,datasets:[
-      lineDS('NIST(TC)',COL.NIST,surv,(DATA.qc_bias.NIST||{}).points),
-      lineDS('BF',COL.BF,surv,(DATA.qc_bias.BF||{}).points),
-      limDS('+1%',1,'#c0392b',surv),limDS('-1%',-1,'#c0392b',surv)]},options:baseOpt()});
-    mk('cum_hdlldl',{type:'line',data:{labels:surv,datasets:[
-      lineDS('HDL',COL.HDL,surv,(DATA.qc_bias.HDL||{}).points),
-      lineDS('LDL',COL.LDL,surv,(DATA.qc_bias.LDL||{}).points),
-      limDS('+2%',2,'#c0392b',surv),limDS('-2%',-2,'#c0392b',surv)]},options:baseOpt()});
+    // 시드(실선)와 업로드·소급 계산값(성긴 점선 △)을 **병기**한다. 어느 쪽도 덮어쓰지 않는다(§0).
+    function upDS(name,color,pts){return lineDS(name+' (업로드·소급)',color,surv,pts,
+      {borderDash:[6,4],pointStyle:'triangle',pointRadius:5,borderWidth:1.5});}
+    function pair(an,name,color){var m=DATA.qc_bias[an]||{},out=[lineDS(name,color,surv,m.points_seed||m.points)];
+      if(m.points_upload&&Object.keys(m.points_upload).length)out.push(upDS(name,color,m.points_upload));return out;}
+    mk('cum_tcbf',{type:'line',data:{labels:surv,datasets:
+      pair('NIST','NIST(TC)',COL.NIST).concat(pair('BF','BF',COL.BF),
+      [limDS('+1%',1,'#c0392b',surv),limDS('-1%',-1,'#c0392b',surv)])},options:baseOpt()});
+    mk('cum_hdlldl',{type:'line',data:{labels:surv,datasets:
+      pair('HDL','HDL',COL.HDL).concat(pair('LDL','LDL',COL.LDL),
+      [limDS('+2%',2,'#c0392b',surv),limDS('-2%',-2,'#c0392b',surv)])},options:baseOpt()});
     var psS=Object.keys(DATA.ps_eval||{});
     function psPts(an,key){var o={};psS.forEach(function(s){var e=DATA.ps_eval[s][an];if(e&&e[key]!=null)o[s]=e[key];});return o;}
     var c=axColor();
@@ -699,12 +720,17 @@ buildHero();buildQCTable();buildPrecTable();buildEvalTable();renderAll();
       lineDS('업로드 HDL Control bias',COL.BF,surv,dcmUp,{borderDash:[2,2]}),
       limDS('+1.0',1,'#c0392b',surv),limDS('-1.0',-1,'#c0392b',surv)]},options:baseOpt()});
 
+    renderConflict(DATA);
     renderManage(DATA);
     var labels=DATA.round_labels||[],tabs=document.getElementById('cumTabs'),body=document.getElementById('cumBody');
     tabs.innerHTML='';
     function show(lab){[].forEach.call(tabs.children,function(x){x.classList.toggle('on',x.dataset.l===lab);});
       var r=(DATA.uploaded||{})[lab]||{};
-      body.innerHTML='<p class="panel-sub">회차 <b>'+esc(lab)+'</b>'+(r.date?(' · '+esc(r.date)):'')+' · 정밀도 기반 median 이상치 제외(취소선), 나머지 2개 채택. QC/Control 미제출.</p>'+ucTable(r.uc)+dcmTable(r.dcm);}
+      body.innerHTML='<p class="panel-sub">회차 <b>'+esc(lab)+'</b>'+(r.date?(' · '+esc(r.date)):'')
+        +(r.reference?' <span class="cum-badge cum-flag">참고용 소급</span>':'')
+        +' · 정밀도 기반 median 이상치 제외(취소선), 나머지 2개 채택. QC/Control 미제출.</p>'
+        +(r.reference?'<p class="cum-legend cum-warn">이 회차는 과거 자료를 소급 누적한 <b>참고용</b>입니다. 제출·판정 근거로 사용하지 마십시오.</p>':'')
+        +ucTable(r.uc)+dcmTable(r.dcm);}
     if(labels.length){labels.forEach(function(l){var b=document.createElement('span');b.className='cum-subtab';b.dataset.l=l;b.textContent=l;b.onclick=function(){show(l);};tabs.appendChild(b);});show(labels[labels.length-1]);}
     else{body.innerHTML='<p class="panel-sub">저장된 업로드 회차가 없습니다. 위에서 측정 파일을 추가하세요.</p>';}
   }
@@ -718,6 +744,31 @@ buildHero();buildQCTable();buildPrecTable();buildEvalTable();renderAll();
       return r.json().then(function(j){if(j&&j.ok){load();}else{alert((j&&j.message)||'삭제 실패');}});
     }).catch(function(){alert('삭제 요청 실패(네트워크).');});
   }
+  // ── 시드 ↔ 소급 계산값 대조 (덮어쓰지 않고 병기) ────────────────────
+  function renderConflict(DATA){
+    var el=document.getElementById('cumConflict');if(!el)return;
+    var cf=DATA.conflicts||[],ref=DATA.reference_labels||[];
+    if(!cf.length&&!ref.length){el.innerHTML='';return;}
+    var h='<p class="panel-title" style="margin-top:16px">시드(과거 이력) ↔ 소급 계산값 대조</p>';
+    if(ref.length)h+='<p class="cum-legend">참고용 소급 회차: '+ref.map(function(l){return '<span class="cum-badge">'+esc(l)+'</span>';}).join(' ')
+      +' — 참고용이며 드리프트(추세) 계산에서 제외됩니다.</p>';
+    if(!cf.length){h+='<p class="cum-legend cum-ok">시드 값과 소급 계산값의 차이가 없습니다.</p>';el.innerHTML=h;return;}
+    h+='<p class="cum-legend cum-warn">아래 항목은 시드에 이미 있던 값과 업로드 파일에서 소급 계산한 값이 다릅니다. '
+      +'<b>어느 쪽도 덮어쓰거나 자동 채택하지 않고 그대로 병기</b>합니다. 원인(측정지 버전·반올림·재계산 범위 등)을 확인한 뒤 '
+      +'검토자가 판단하십시오. <b>차이가 작은 쪽을 고르는 식의 선택은 금지</b>입니다.</p>'
+      +'<table class="cum-sub" style="max-width:760px"><thead><tr><th>회차</th><th>분석물질</th>'
+      +'<th>시드 값</th><th>소급 계산값</th><th>차이</th><th>한계</th><th>비고</th></tr></thead><tbody>';
+    cf.forEach(function(c){
+      h+='<tr><td>'+esc(c.label)+'</td><td>'+esc(c.analyte_label||c.analyte)+'</td>'
+        +'<td>'+num(c.seed,3)+' '+esc(c.unit)+'</td><td>'+num(c.upload,3)+' '+esc(c.unit)+'</td>'
+        +'<td class="cum-flag">'+(c.diff>=0?'+':'')+num(c.diff,3)+'</td>'
+        +'<td>±'+esc(c.limit)+' '+esc(c.unit)+'</td>'
+        +'<td>'+(c.reference?'참고용 소급':'—')+'</td></tr>';});
+    h+='</tbody></table>';
+    if(DATA.note_seed)h+='<p class="cum-legend">'+esc(DATA.note_seed)+'</p>';
+    el.innerHTML=h;
+  }
+
   function renderManage(DATA){
     var el=document.getElementById('cumManage');if(!el)return;
     var labs=DATA.round_labels||[];
@@ -842,7 +893,7 @@ buildHero();buildQCTable();buildPrecTable();buildEvalTable();renderAll();
         .catch(function(){document.getElementById('cumBody').innerHTML='<p class="panel-sub">누적 데이터를 불러오지 못했습니다(로그인/서버 확인).</p>';}),
       loadStats()]);}
 
-  window.initCum=function(){if(CUM.loaded)return;CUM.loaded=true;wireUpload();load();};
+  window.initCum=function(){if(CUM.loaded)return;CUM.loaded=true;wireUpload();wireBackfill();load();};
   // 테마 전환 시 차트 색상 갱신
   var tb=document.getElementById('themebtn');if(tb)tb.addEventListener('click',function(){if(CUM.loaded)setTimeout(load,0);});
 
@@ -870,6 +921,96 @@ buildHero();buildQCTable();buildPrecTable();buildEvalTable();renderAll();
           setF(null);labIn.value='';dateIn.value='';go.disabled=true;return load();});
       }).catch(function(err){stat.innerHTML='<span class="er">✗ '+(err.message||'네트워크 오류')+'</span>';go.disabled=false;});
     };
+  }
+
+  // ── 과거 회차 소급 누적(T1) ─────────────────────────────────────────
+  // 흐름: 파일 선택 → /rounds/preview(저장 안 함) → 사용자가 라벨 확인·확정 → /rounds/add(reference=1)
+  // 원칙: 자동 추정만으로 저장하지 않는다. 시드와 다른 값은 덮어쓰지 않고 병기한다(§0, §10 T1).
+  function wireBackfill(){
+    var drop=document.getElementById('bfDrop'),file=document.getElementById('bfFile'),
+        scan=document.getElementById('bfScan'),stat=document.getElementById('bfStat'),
+        prev=document.getElementById('bfPreview'),chosen=null;
+    if(!drop)return;
+    function setF(f){chosen=f;scan.disabled=!f;prev.innerHTML='';stat.innerHTML='';
+      drop.textContent=f?('📄 '+f.name):'과거 측정 .xlsx 끌어놓기 / 클릭';}
+    drop.onclick=function(){file.click();};
+    file.onchange=function(e){setF(e.target.files[0]);};
+    ['dragover','dragenter'].forEach(function(ev){drop.addEventListener(ev,function(e){e.preventDefault();drop.classList.add('drag');});});
+    ['dragleave','drop'].forEach(function(ev){drop.addEventListener(ev,function(e){e.preventDefault();drop.classList.remove('drag');});});
+    drop.addEventListener('drop',function(e){if(e.dataTransfer.files[0])setF(e.dataTransfer.files[0]);});
+
+    function cmpTable(sc){
+      if(!sc||!sc.rows||!sc.rows.length)return '';
+      var h='<p class="panel-sub" style="font-weight:700;margin-top:10px">시드(과거 이력) ↔ 이 파일의 소급 계산값</p>'
+        +'<p class="cum-legend">차이가 있어도 <b>덮어쓰지 않고 병기</b>합니다. 시드 값은 그대로 보존됩니다.</p>'
+        +'<table class="cum-sub" style="max-width:720px"><thead><tr><th>항목</th><th>시드</th><th>소급 계산</th><th>차이</th><th>비고</th></tr></thead><tbody>';
+      sc.rows.forEach(function(r){
+        h+='<tr><td>'+esc(r.label)+'</td>'
+          +'<td>'+(r.seed==null?'—':num(r.seed,3)+' '+esc(r.unit))+'</td>'
+          +'<td>'+(r.retro==null?'—':num(r.retro,3)+' '+esc(r.unit))+'</td>'
+          +'<td'+(r.differs?' class="cum-flag"':'')+'>'+(r.diff==null?'—':(r.diff>=0?'+':'')+num(r.diff,3))+'</td>'
+          +'<td>'+(r.comparable===false?'<span class="panel-sub">직접 비교 불가</span>':(r.differs?'차이 있음 — 병기':'일치'))+'</td></tr>';});
+      h+='</tbody></table>';
+      if(sc.rows.some(function(r){return r.note;}))
+        h+='<p class="cum-legend">'+esc(sc.rows.filter(function(r){return r.note;})[0].note)+'</p>';
+      return h;
+    }
+    function renderPreview(P){
+      var cands=P.candidates||[],st=P.status||{};
+      var h='<div style="border:1px solid var(--border);border-left:3px solid var(--s1);border-radius:8px;padding:10px 12px;margin-top:8px">';
+      h+='<p class="panel-sub"><b>'+esc(P.filename)+'</b> · 감지 모드 <b>'+esc((P.mode||'?').toUpperCase())+'</b>'
+        +' · 검체 '+esc(P.n_samples)+'개 · QC '+esc(P.n_qc)+'건'+(P.n_exceed?' · <span class="cum-flag">한계초과 '+esc(P.n_exceed)+'건</span>':'')+'</p>';
+      h+='<p class="cum-legend">라벨 추정 근거: '+(cands.length
+        ? cands.map(function(c){return '<span class="cum-badge">'+esc(c.label)+' ← '+esc(c.source)+' “'+esc(c.matched)+'”</span>';}).join(' ')
+        : '<b class="cum-flag">파일명·시트명에서 회차를 찾지 못했습니다. 직접 입력하십시오.</b>')+'</p>';
+      h+='<div class="cum-up" style="margin:6px 0">'
+        +'<div class="cum-fld"><label>회차 라벨(확정)</label><input class="cum-in" type="text" id="bfLabel" size="9" value="'+esc(P.suggested_label||'')+'"></div>'
+        +'<div class="cum-fld"><label>측정일(선택)</label><input class="cum-in" type="text" id="bfDate" size="10" placeholder="예: 2025-06"></div>'
+        +'<button class="cum-btn" id="bfRecheck">라벨 다시 확인</button></div>';
+      if(st&&st.exists)h+='<p class="cum-legend cum-warn">⚠ 이 라벨(<b>'+esc(st.label)+'</b>)은 이미 저장되어 있습니다'
+        +(st.has_uc?' · UC 있음':'')+(st.has_dcm?' · DCM 있음':'')+'. 같은 모드로 저장하면 <b>기존 값을 대체</b>합니다.</p>';
+      if(st&&st.in_seed)h+='<p class="cum-legend">이 회차는 과거 이력 시드에도 존재합니다. 시드 값은 보존되며 소급 값은 별도 계열로 병기됩니다.</p>';
+      h+=cmpTable(P.seed_compare);
+      h+='<p class="cum-legend'+(P.year_ok?'':' cum-warn')+'">'+(P.year_ok
+        ? '연도 확인 완료 — 최근 3년('+esc(P.min_year)+'년 이후) 범위입니다.'
+        : '<b class="cum-flag">'+esc(P.year_message||'회차 라벨을 확인하세요.')+'</b>')+'</p>';
+      h+='<label class="cum-legend" style="display:block"><input type="checkbox" id="bfCertain"> 측정 시점이 <b>문서로 확인됨</b> (체크하면 최근 3년 이전 자료도 소급 가능)</label>';
+      h+='<label class="cum-legend" style="display:block"><input type="checkbox" id="bfConfirm"> 위 회차 라벨을 <b>확인했으며 참고용 소급 자료로 저장</b>합니다.</label>';
+      h+='<button class="cum-btn" id="bfSave" disabled>참고용으로 소급 저장</button>';
+      h+='</div>';
+      prev.innerHTML=h;
+      var save=document.getElementById('bfSave'),conf=document.getElementById('bfConfirm'),
+          cert=document.getElementById('bfCertain'),lab=document.getElementById('bfLabel');
+      function sync(){save.disabled=!(conf.checked&&lab.value.trim()&&(P.year_ok||cert.checked));}
+      conf.onchange=sync;cert.onchange=sync;lab.oninput=sync;sync();
+      document.getElementById('bfRecheck').onclick=function(){doScan(lab.value.trim(),cert.checked);};
+      save.onclick=function(){
+        save.disabled=true;stat.innerHTML='저장 중…';
+        var fd=new FormData();fd.append('file',chosen);fd.append('label',lab.value.trim());
+        fd.append('date',(document.getElementById('bfDate').value||'').trim());
+        fd.append('reference','1');fd.append('confirm','1');
+        if(cert.checked)fd.append('date_certain','1');
+        fetch('/rounds/add',{method:'POST',body:fd,credentials:'same-origin'}).then(function(r){
+          return r.json().then(function(j){if(!r.ok)throw new Error(j.error||'저장 실패');return j;});
+        }).then(function(j){
+          stat.innerHTML='<span class="ok">✓ '+esc(j.message||'저장됨')+'</span>'+(j.warn?(' <span class="er">'+esc(j.warn)+'</span>'):'')+' · 경향 갱신 중…';
+          setF(null);return load();
+        }).catch(function(err){stat.innerHTML='<span class="er">✗ '+esc(err.message||'네트워크 오류')+'</span>';save.disabled=false;});
+      };
+    }
+    function doScan(label,certain){
+      if(!chosen)return;
+      scan.disabled=true;stat.innerHTML='분석 중… (저장하지 않습니다)';
+      var fd=new FormData();fd.append('file',chosen);
+      if(label)fd.append('label',label);
+      if(certain)fd.append('date_certain','1');
+      fetch('/rounds/preview',{method:'POST',body:fd,credentials:'same-origin'}).then(function(r){
+        return r.json().then(function(j){if(!r.ok)throw new Error(j.error||'분석 실패');return j;});
+      }).then(function(P){stat.innerHTML='<span class="ok">미리보기 — 아직 저장되지 않았습니다.</span> 라벨을 확인한 뒤 저장하십시오.';
+        renderPreview(P);scan.disabled=false;
+      }).catch(function(err){stat.innerHTML='<span class="er">✗ '+esc(err.message||'네트워크 오류')+'</span>';scan.disabled=false;});
+    }
+    scan.onclick=function(){doScan('',false);};
   }
 })();
 </script>

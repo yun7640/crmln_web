@@ -6,6 +6,7 @@ from flask import (Flask, request, session, redirect, url_for, render_template,
 import auth
 import review_engine
 import rounds
+import stats
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-only-change-me')
@@ -115,6 +116,16 @@ def rounds_data():
     p = rounds.dashboard_payload()
     p['is_admin'] = bool(auth.is_admin(session.get('user', '')))
     return app.response_class(json.dumps(p, ensure_ascii=False),
+                              mimetype='application/json')
+
+
+@app.route('/rounds/stats')
+@login_required
+def rounds_stats():
+    """회차 누적 데이터 기반 추가 통계(정밀도·bias 요약·드리프트·제외 index 분포).
+
+    모니터링·진단용이며 반복측정 채택 로직에는 관여하지 않는다(인수인계 §0)."""
+    return app.response_class(json.dumps(stats.payload(), ensure_ascii=False),
                               mimetype='application/json')
 
 

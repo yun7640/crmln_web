@@ -148,6 +148,14 @@ td .st,.st{display:inline-flex;align-items:center;gap:4px;font-weight:700;font-s
   #t6 .cum-stat .ok{color:#1B7F4B}#t6 .cum-stat .er{color:#C0392B}
   #t6 .cum-subtab{display:inline-block;padding:5px 10px;border:1px solid var(--border);border-radius:7px;font-size:12px;cursor:pointer;background:var(--surface);color:var(--ink-2,inherit);margin:0 4px 4px 0}
   #t6 .cum-subtab.on{background:var(--s1);color:#fff;border-color:var(--s1)}
+  #t6 .cum-warn{border-left:3px solid #c0392b;padding-left:9px}
+  #t6 .cum-badge{font-size:11px;font-weight:600;padding:2px 7px;border-radius:9px;background:var(--surface);border:1px solid var(--border);vertical-align:middle}
+  #t6 .cum-bar{display:inline-block;width:64px;height:8px;border-radius:4px;background:var(--border);vertical-align:middle;overflow:hidden}
+  #t6 .cum-bar i{display:block;height:100%;background:#1b7f4b}
+  #t6 .cum-bar.warn i{background:#e08a1e}
+  #t6 .cum-bar.over i{background:#c0392b}
+  #t6 .cum-flag{color:#c0392b;font-weight:700}
+  #t6 .cum-ok{color:#1b7f4b;font-weight:600}
   #t6 table.cum-sub{border-collapse:collapse;width:100%;font-size:12px;font-variant-numeric:tabular-nums}
   #t6 table.cum-sub th,#t6 table.cum-sub td{border:1px solid var(--border);padding:5px 7px;text-align:center}
   #t6 table.cum-sub th{background:color-mix(in srgb,var(--s1) 10%,var(--surface))}
@@ -196,6 +204,10 @@ td .st,.st{display:inline-flex;align-items:center;gap:4px;font-weight:700;font-s
   <p class="panel-title" style="margin-top:16px">회차별 CRMLN 제출 결과 (선택 2/3)</p>
   <div id="cumTabs" style="margin-bottom:8px"></div>
   <div id="cumBody"><p class="panel-sub">저장된 업로드 회차가 없습니다. 위에서 측정 파일을 추가하세요.</p></div>
+
+  <p class="panel-title" style="margin-top:18px">누적 통계 분석 <span class="cum-badge" id="cumStatsBackend"></span></p>
+  <p class="cum-legend cum-warn">⚠️ 아래 통계는 <b>모니터링·진단용</b>입니다. 반복측정(R1/R2/R3) 채택은 정밀도/QC 기반 로직(median 이상치 제외)으로만 결정되며 이 통계는 채택에 관여하지 않습니다. <b>어떤 값도 판정을 통과시키기 위한 선택 근거로 사용하지 마십시오.</b> 최종 판정은 CDC 참조법 회신 및 검토자 확인 후 확정합니다.</p>
+  <div id="cumStats"><p class="panel-sub">불러오는 중…</p></div>
 </div>
 
 <!-- ================= TAB 1 ================= -->
@@ -722,8 +734,113 @@ buildHero();buildQCTable();buildPrecTable();buildEvalTable();renderAll();
     [].forEach.call(el.querySelectorAll('.cum-del'),function(b){b.onclick=function(){del(decodeURIComponent(b.dataset.l),b.dataset.m||null);};});
   }
 
-  function load(){return fetch('/rounds/data',{credentials:'same-origin'}).then(function(r){return r.json();}).then(render)
-      .catch(function(){document.getElementById('cumBody').innerHTML='<p class="panel-sub">누적 데이터를 불러오지 못했습니다(로그인/서버 확인).</p>';});}
+  // ── 누적 통계 분석(/rounds/stats) ──────────────────────────────────
+  // 모니터링·진단용. 반복측정 채택 로직에는 관여하지 않는다(인수인계 §0).
+  function num(x,d){return (x===null||x===undefined)?'—':(+x).toFixed(d===undefined?3:d);}
+  function marginBar(m){
+    if(m===null||m===undefined)return '—';
+    var pct=Math.min(100,Math.round(m*100)),cls=m>1?'over':(m>0.75?'warn':'');
+    return '<span class="cum-bar '+cls+'"><i style="width:'+pct+'%"></i></span> '+num(m,2);
+  }
+  function statsHTML(S){
+    var h='';
+    // 1) 회차·모드·분석물질별 bias 요약 + 한계 대비 마진
+    h+='<p class="panel-sub" style="font-weight:700;margin-top:6px">QC·Control bias 요약 · 허용한계 대비 마진</p>'
+      +'<p class="cum-legend">마진 = |평균 bias| ÷ 허용한계. 1.00을 넘으면 한계 초과. HDL은 mg/dL, 나머지는 % 기준.</p>'
+      +'<table class="cum-sub"><thead><tr><th>회차</th><th>모드</th><th>분석물질</th><th>n</th>'
+      +'<th>평균 bias</th><th>SD</th><th>범위</th><th>한계</th><th>마진</th></tr></thead><tbody>';
+    var bs=S.bias_summary||{},rows=0;
+    (S.round_labels||[]).forEach(function(lab){
+      var byMode=bs[lab]||{};
+      ['uc','dcm'].forEach(function(mode){
+        var blk=byMode[mode];if(!blk)return;
+        Object.keys(blk).sort().forEach(function(an){
+          var b=blk[an];rows++;
+          h+='<tr><td>'+esc(lab)+'</td><td>'+mode.toUpperCase()+'</td><td>'+esc(an)+'</td><td>'+b.n+'</td>'
+            +'<td'+(b.exceed?' class="cum-flag"':'')+'>'+num(b.mean)+' '+esc(b.unit)+'</td>'
+            +'<td>'+num(b.sd)+'</td><td>'+num(b.min)+' ~ '+num(b.max)+'</td>'
+            +'<td>±'+b.limit+' '+esc(b.unit)+'</td><td>'+marginBar(b.margin)+'</td></tr>';
+        });
+      });
+    });
+    h+='</tbody></table>';
+    if(!rows)return '<p class="panel-sub">저장된 회차가 없어 통계를 계산할 수 없습니다. 위에서 측정 파일을 추가하세요.</p>';
+
+    // 2) 정밀도(반복 CV) · 재현성(Day1 vs Day2)
+    h+='<p class="panel-sub" style="font-weight:700;margin-top:14px">검체 반복측정 정밀도 · Day 간 재현성</p>'
+      +'<p class="cum-legend">CV는 <b>채택된 2개 반복</b>의 변동계수(%). Day 차이는 같은 검체 Day1·Day2 채택값의 절대차(mg/dL).</p>'
+      +'<table class="cum-sub"><thead><tr><th>회차</th><th>모드</th><th>n</th><th>CV 평균(%)</th><th>CV 최대(%)</th>'
+      +'<th>Day차 평균</th><th>Day차 최대</th></tr></thead><tbody>';
+    var pr=S.precision||{};
+    (S.round_labels||[]).forEach(function(lab){
+      var byMode=pr[lab]||{};
+      ['uc','dcm'].forEach(function(mode){
+        var p=byMode[mode];if(!p)return;
+        h+='<tr><td>'+esc(lab)+'</td><td>'+mode.toUpperCase()+'</td><td>'+p.n_cv+'</td>'
+          +'<td>'+num(p.within_cv_mean)+'</td><td>'+num(p.within_cv_max)+'</td>'
+          +'<td>'+num(p.day_diff_mean)+'</td><td>'+num(p.day_diff_max)+'</td></tr>';
+      });
+    });
+    h+='</tbody></table>';
+
+    // 3) 드리프트(회차당 bias 변화 기울기)
+    h+='<p class="panel-sub" style="font-weight:700;margin-top:14px">회차간 bias 드리프트</p>'
+      +'<p class="cum-legend">최소제곱 기울기(회차당 변화량). 회차 3개 미만이면 추세를 판단하지 않습니다(—). '
+      +'⚠ 표시는 허용한계의 25%/회차를 넘는 경우로, <b>임의 임계값이며 경고용일 뿐 판정 기준이 아닙니다.</b> '
+      +'UC와 DCM은 서로 다른 측정절차이므로 합치지 않습니다.</p>'
+      +'<table class="cum-sub"><thead><tr><th>모드</th><th>분석물질</th><th>회차수</th>'
+      +'<th>기울기 (/회차)</th><th>한계</th><th>판단</th></tr></thead><tbody>';
+    var dr=S.drift||{},any=false;
+    ['uc','dcm'].forEach(function(mode){
+      var per=dr[mode];if(!per)return;
+      Object.keys(per).sort().forEach(function(an){
+        var d=per[an];any=true;
+        h+='<tr><td>'+mode.toUpperCase()+'</td><td>'+esc(an)+'</td><td>'+d.n+'</td>'
+          +'<td>'+(d.slope_per_round===null?'—':num(d.slope_per_round)+' '+esc(d.unit))+'</td>'
+          +'<td>±'+d.limit+' '+esc(d.unit)+'</td>'
+          +'<td>'+(d.slope_per_round===null?'<span class="panel-sub">판단 보류(회차 부족)</span>'
+                   :(d.flag?'<span class="cum-flag">⚠ 드리프트 의심</span>':'<span class="cum-ok">안정</span>'))+'</td></tr>';
+      });
+    });
+    if(!any)h+='<tr><td colspan="6" class="panel-sub">계산할 데이터가 없습니다.</td></tr>';
+    h+='</tbody></table>';
+
+    // 4) 제외된 반복 index 분포
+    var dp=S.drop_pattern||{};
+    h+='<p class="panel-sub" style="font-weight:700;margin-top:14px">제외된 반복 index 분포</p>'
+      +'<p class="cum-legend">median 이상치로 제외된 반복이 R1/R2/R3 중 어디에 몰리는지. '
+      +'특정 index에 치우치면 측정 순서·장비 안정화 등 <b>계통 오류</b>를 의심할 근거가 됩니다. '
+      +'채택 로직 자체는 바뀌지 않으며, 원인을 찾기 위한 진단 정보입니다.</p>';
+    if(!dp.total){h+='<p class="panel-sub">데이터 없음.</p>';}
+    else{
+      h+='<table class="cum-sub" style="max-width:520px"><thead><tr><th>회차</th><th>R1</th><th>R2</th><th>R3</th></tr></thead><tbody>';
+      Object.keys(dp.per_round||{}).forEach(function(lab){
+        var c=dp.per_round[lab];
+        h+='<tr><td>'+esc(lab)+'</td><td>'+c.R1+'</td><td>'+c.R2+'</td><td>'+c.R3+'</td></tr>';
+      });
+      h+='<tr style="font-weight:700"><td>합계</td><td>'+dp.counts.R1+'</td><td>'+dp.counts.R2+'</td><td>'+dp.counts.R3+'</td></tr>';
+      h+='</tbody></table>';
+      h+='<p class="cum-legend">총 '+dp.total+'건 · 균등 기대치 각 '+num(dp.expected_each,1)+'건 · 최대 상대편차 '
+        +(dp.max_rel_dev===null?'판단 보류(표본 부족)':num(dp.max_rel_dev,2))
+        +' '+(dp.flag?'<span class="cum-flag">⚠ 특정 반복에 치우침 — 측정 순서·장비 안정화 점검 권장</span>':'<span class="cum-ok">치우침 뚜렷하지 않음</span>')+'</p>';
+    }
+    if(S.note)h+='<p class="cum-legend cum-warn" style="margin-top:12px">'+esc(S.note)+'</p>';
+    return h;
+  }
+  function loadStats(){
+    return fetch('/rounds/stats',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(S){
+      var b=document.getElementById('cumStatsBackend');
+      if(b)b.textContent=(S.backend==='postgres'?'🟢 Postgres':'📁 파일')+' · 회차 '+S.n_rounds;
+      document.getElementById('cumStats').innerHTML=statsHTML(S);
+    }).catch(function(){
+      document.getElementById('cumStats').innerHTML='<p class="panel-sub">통계를 불러오지 못했습니다(로그인/서버 확인).</p>';
+    });
+  }
+
+  function load(){return Promise.all([
+      fetch('/rounds/data',{credentials:'same-origin'}).then(function(r){return r.json();}).then(render)
+        .catch(function(){document.getElementById('cumBody').innerHTML='<p class="panel-sub">누적 데이터를 불러오지 못했습니다(로그인/서버 확인).</p>';}),
+      loadStats()]);}
 
   window.initCum=function(){if(CUM.loaded)return;CUM.loaded=true;wireUpload();load();};
   // 테마 전환 시 차트 색상 갱신

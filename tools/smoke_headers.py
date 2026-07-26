@@ -138,6 +138,36 @@ def main():
     check('시드 회차(2023.1) 포함', '2023.1' in (p.get('surveys') or []), (p.get('surveys') or [])[:4])
     check('업로드 회차(2026.7) 포함', '2026.7' in (p.get('round_labels') or []), p.get('round_labels'))
 
+    print('[6b] /rounds/stats 누적 통계')
+    r = c.get('/rounds/stats')
+    check('/rounds/stats 200', r.status_code == 200, r.status_code)
+    assert_latin1_headers(r, '/rounds/stats')
+    S = r.get_json(silent=True) or {}
+    for k in ('backend', 'round_labels', 'n_rounds', 'bias_summary', 'precision',
+              'drift', 'drop_pattern', 'limits', 'note'):
+        check('stats.%s 존재' % k, k in S, sorted(S)[:12])
+    check('stats.n_rounds=1', S.get('n_rounds') == 1, S.get('n_rounds'))
+    bs = (S.get('bias_summary') or {}).get('2026.7') or {}
+    check('bias_summary에 uc·dcm 둘 다', set(bs) == {'uc', 'dcm'}, sorted(bs))
+    uc_bs = bs.get('uc') or {}
+    check('UC bias_summary 분석물질 4종', set(uc_bs) == {'TC', 'BF', 'HDL', 'LDL'}, sorted(uc_bs))
+    hdl = uc_bs.get('HDL') or {}
+    check('HDL 한계는 mg/dL 기준 ±1', hdl.get('limit') == 1.0 and hdl.get('unit') == 'mg/dL', hdl)
+    check('TC 한계는 % 기준 ±1', (uc_bs.get('TC') or {}).get('unit') == '%', uc_bs.get('TC'))
+    check('margin = |mean|/limit 일관',
+          abs((hdl.get('margin') or 0) - abs(hdl.get('mean') or 0) / 1.0) < 0.002, hdl)
+    dr = S.get('drift') or {}
+    check('drift는 UC/DCM 분리 저장', set(dr) <= {'uc', 'dcm'} and set(dr), sorted(dr))
+    check('회차 1개 → 기울기 판단 보류(None)',
+          all(v.get('slope_per_round') is None for m in dr.values() for v in m.values()), dr)
+    pr = (S.get('precision') or {}).get('2026.7') or {}
+    check('precision에 CV·Day차 계산됨',
+          (pr.get('uc') or {}).get('n_cv', 0) > 0 and (pr.get('uc') or {}).get('n_pairs', 0) > 0, pr)
+    dp = S.get('drop_pattern') or {}
+    check('drop_pattern 합계 = R1+R2+R3',
+          dp.get('total') == sum((dp.get('counts') or {}).values()), dp)
+    check('통계 note에 방법론 경고 포함', '판정' in (S.get('note') or ''), S.get('note'))
+
     print('[7] /rounds/delete (관리자, ajax)')
     r = c.post('/rounds/delete', data={'label': '2026.7', 'mode': 'dcm', 'ajax': '1'})
     check('/rounds/delete ajax 200', r.status_code == 200, r.data[:200])

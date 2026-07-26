@@ -1,21 +1,35 @@
 # CRMLN 대시보드 프로젝트 · 인수인계 (HANDOVER)
 
-> **새 세션 사용법 (★ 2026-07-26 갱신 · 실측 반영):**
+> **새 세션 사용법 (★ 2026-07-26 갱신):**
 >
-> 이 계정에서는 **"Run this task → On your computer" 선택기가 제공되지 않습니다**(2026-07-26 확인).
-> 따라서 모든 세션은 **클라우드**에서 실행되며, 아래 방식으로 작업합니다.
+> **이 프로젝트는 "내 컴퓨터에서 실행(On your computer)"으로 시작하세요.** 그래야 Claude가 커밋·푸시까지 처리합니다.
 >
-> 1. Claude 데스크톱 앱에서 **새 Cowork 작업**을 시작합니다. (데스크톱 앱이어야 로컬 파일 브리지가 동작)
-> 2. 폴더는 `G:\내 드라이브\00_study\표준화과제\CRMLN` 을 연결한 뒤 이렇게 요청합니다:
->    "`HANDOVER_인수인계.md`를 읽고 지금까지 상태를 파악한 다음 이어서 진행해줘.
->     `C:\Users\yun76\Documents\GitHub\crmln_web` 폴더 접근 권한을 요청해서 거기에 직접 수정 반영해줘."
-> 3. Claude가 폴더 접근 승인 요청을 띄우면 **승인**합니다. 이후 Claude가 **git 작업트리에 직접 파일을 씁니다.**
-> 4. **커밋·푸시는 사용자가 GitHub Desktop에서 수행**합니다(변경분이 자동으로 표시됨) → Railway 자동 재배포.
+> 1. Claude **데스크톱 앱**에서 **새 Cowork 작업**을 시작합니다.
+>    · 실행 위치는 **작업을 시작하는 시점에만** 정해집니다. 이미 돌아가는 세션은 옮길 수 없습니다.
+>    · 우측 상단 **"Run this task" → "On your computer"**, 또는
+>      **Settings → Cowork → "Run new tasks in the cloud" 를 꺼두면** 새 작업이 기본적으로 내 컴퓨터에서 실행됩니다.
+>    · 웹·모바일에서 시작한 작업은 항상 클라우드입니다(데스크톱 앱 전용 기능).
+> 2. 폴더는 **실제 git clone 경로**를 연결합니다: `C:\Users\yun76\Documents\GitHub\crmln_web`
+> 3. 이렇게 요청합니다:
+>    "이 폴더의 `HANDOVER_인수인계.md`를 읽고 지금까지 상태를 파악한 다음 이어서 진행해줘.
+>     파일 수정은 이 폴더에 직접 반영하고 커밋·푸시까지 처리해줘."
+> 4. Claude가 파일 수정 → `git commit` 까지 수행.
 >
-> ⚠️ **클라우드 세션은 사용자 PC에서 셸(git)을 실행할 수 없습니다.** 파일 읽기/쓰기 브리지만 가능하므로
-> `git commit` / `git push`는 Claude가 대신 할 수 없습니다. 마지막 커밋 버튼만 사용자가 눌러주세요.
-> (참고: 선택기가 나타나는 계정이라면 Settings → Cowork → "Run new tasks in the cloud" 토글로 기본값 변경 가능.
->  웹·모바일에서 시작한 작업은 항상 클라우드입니다.)
+> **⚠️ 2026-07-26 실측 확인: on-computer 세션이어도 `git push` 는 Claude가 할 수 없습니다.**
+> Claude의 셸은 폴더만 마운트된 별도 리눅스 샌드박스라 **Windows 자격증명 관리자의 GitHub 토큰이 보이지 않습니다**
+> (`git push` → `could not read Username for 'https://github.com'`).
+> `git ls-remote`(공개 읽기)와 `git commit`(로컬)은 정상 동작합니다.
+> ⇒ **역할 분담: Claude = 수정 + 검증 + commit / 사용자 = GitHub Desktop에서 Push 버튼.**
+> Push 후 Railway가 자동 재배포합니다.
+>
+> 참고: 이 샌드박스는 마운트 폴더의 **파일 삭제가 기본 차단**되어 있습니다
+> (`rm` → `Operation not permitted`). git 이 남긴 `.git/index.lock`·`tmp_obj_*` 정리에 필요하므로,
+> 그런 오류가 나면 Claude가 삭제 권한을 요청하고 사용자가 1회 승인하면 됩니다.
+>
+> **클라우드 세션으로 시작해버렸다면** (§11 아래쪽 참조)
+> 클라우드 세션은 사용자 PC에서 셸(git)을 실행할 수 없어 **커밋·푸시를 대신할 수 없습니다.**
+> 이때는 Claude가 `device_request_folder_access`로 위 clone 폴더 권한을 받아 파일만 직접 쓰고,
+> **마지막 Commit + Push 는 사용자가 GitHub Desktop에서** 눌러야 합니다.
 
 작성일: 2026-07-26 · 최신 버전: **v9** (문서 개정 v9.1)
 
@@ -66,11 +80,13 @@ private/
 assets/
   select_template.xlsx     동적 선택 시트 템플릿(수식·조건부서식 보존, 값 주입 방식)
   history_seed.json        과거 이력 2023.1–2026.7(QC bias·PS평가·DCM평가·기준) 시드
+stats.py                   ★ 누적 통계(bias 요약·정밀도·드리프트·제외 index 분포). 모니터링 전용
 tools/                     ★ 배포 전 스모크 검증 (tools/README.md 참조)
   make_fixture.py          합성 측정지 생성(UC/DCM) — ⚠️ 가짜 데이터, 판정·제출 금지
-  smoke_headers.py         앱 기능 + HTTP 헤더 latin-1 안전성 (41검사, Windows 포함 어디서나)
-  smoke_gunicorn.sh        실제 gunicorn 기동 후 HTTP 레벨 재검증 (14검사, Linux/WSL 전용)
-  smoke_tab6.py            Playwright headless로 ⑥탭 Chart.js 렌더 검증 (11검사)
+  smoke_headers.py         앱 기능 + HTTP 헤더 latin-1 안전성 (63검사, Windows 포함 어디서나)
+  smoke_gunicorn.sh        실제 gunicorn 기동 후 HTTP 레벨 재검증 (18검사, Linux/WSL 전용)
+  smoke_tab6.py            Playwright headless로 ⑥탭 Chart.js·통계 섹션 렌더 검증 (17검사)
+  stats_queries.sql        Postgres JSONB 직접 분석용 참조 쿼리 7종(읽기 전용)
   README.md                실행법·막는 버그 목록
 requirements.txt  Procfile  railway.json  runtime.txt  README.md  make_user.py
 .gitignore                 (tools/vendor/, tools/_fixtures/ 제외 포함)
@@ -90,6 +106,7 @@ HANDOVER_인수인계.md        (이 문서)
 - `/` — dashboard.html(업로드 패널 + iframe). `/view` — private/dashboard.html 제공.
 - `/review` (POST) — 단발 업로드 → 검토파일 반환(누적 저장 안 함). 헤더 `X-Review-Summary`.
 - `/rounds` — cumulative.html(전체 페이지). `/rounds/data` — 누적 payload JSON(+`is_admin`).
+- `/rounds/stats` — 누적 통계 JSON(stats.py). 모니터링·진단용, 채택 로직 비관여.
 - `/rounds/add` (POST) — 업로드 → **summarize_round로 누적 저장 + process로 검토파일 반환**. 헤더 `X-Round-Result`.
 - `/rounds/delete` (POST, admin) — 회차/모드 삭제. `ajax=1`이면 JSON 반환, 아니면 redirect.
 - `/rounds/export` `/rounds/import` (admin) — 누적 백업 JSON.
@@ -173,8 +190,25 @@ HANDOVER_인수인계.md        (이 문서)
   검증 중 확인된 사실: `/review`·`/rounds/add` 모두 헤더 latin-1 안전, canon_label 정상,
   ⑥탭 Chart.js 4개 캔버스 정상 렌더, 콘솔 에러 없음. **현재 코드에서 재발 버그 없음.**
   origin/main `a2d2ee8`에 반영 확인, Railway 배포 정상(`/healthz` → `{"ok":true}`).
+- **v11.1 (2026-07-26, 문서만):** 사용자가 Cowork 설정에서 on-computer 실행을 활성화 →
+  문서 맨 위 사용법과 §11을 (A) on-computer 권장 / (B) 클라우드 폴백 2단 구조로 재작성.
+- **v11.2 (2026-07-26): T2 변경분 커밋.** 미커밋 상태였던 `stats.py`·`/rounds/stats`·⑥탭 통계 섹션·
+  `tools/stats_queries.sql` 및 스모크 확장분을 검증 후 커밋(9개 파일, +662/−35).
+  · 검증: `smoke_headers.py` **63/63 통과**, `smoke_gunicorn.sh` **18/18 통과**(실 gunicorn, 한글 헤더 latin-1 안전 재확인).
+  · `smoke_tab6.py`는 샌드박스 네트워크 allowlist가 Chromium 바이너리 다운로드를 차단해 **실행 불가 → SKIP**.
+    대체 정적 검증 수행: `node --check`로 `private/dashboard.html` 인라인 `<script>` 2블록 문법 통과,
+    ⑥탭 통계 DOM(`#cumStats`·`#cumStatsBackend`·`loadStats`·`statsHTML`·`/rounds/stats` fetch)과
+    방법론 경고 문구 10종 존재 확인, `stats_queries.sql` 전량 SELECT 전용 확인.
+    ⚠️ **브라우저 실제 렌더 검증은 미수행** — 배포 후 공개 URL ⑥탭에서 눈으로 확인 필요.
+  · **줄바꿈 문제 해소:** 리포 로컬에 `core.autocrlf=input` 설정. 이제 CRLF 잡음 없이 실제 변경 파일만 스테이징됨
+    (설정 전에는 25개 파일이 전부 수정된 것처럼 보였음). 이 설정은 `.git/config`에 남겨둠.
 - **v10.1 (2026-07-26): T3 완료.** Drive `crmln-app` 사본 전수 대조 후 폐기 결정(고유 파일 0개).
   경고 파일 배치, §12 폴더표 정리. 폴더 실제 삭제는 사용자 조치 대기.
+- **v11 (2026-07-26): T2 완료.** `stats.py` 신설, `/rounds/stats` 라우트, ⑥탭 통계 섹션,
+  `tools/stats_queries.sql`(7종). 스모크 **98검사**(63+18+17) 전부 통과.
+  로컬 Postgres 16을 띄워 **Postgres 백엔드 경로와 SQL 쿼리 전량을 실제 실행 검증**.
+  · 검증 중 확인: `drift`를 UC/DCM 합산하면 같은 라벨이 중복되어 기울기가 왜곡됨 → **모드별 분리**로 수정.
+  · Postgres `round()`와 Python `round()`(banker's)의 3째 자리 ±0.001 차이는 SQL 파일에 주석으로 명시.
 
 ## 10. 다음 작업 계획 (2026-07-26 사용자 확정 · 우선순위 순)
 
@@ -188,9 +222,18 @@ HANDOVER_인수인계.md        (이 문서)
   · 회차 라벨은 파일명/시트명에서 추정하되 **반드시 사용자 확인 후 확정**(자동 추정만으로 저장 금지).
   · `canon_label`로 정규화되므로 중복 생성 위험은 낮으나, 저장 전 기존 라벨 존재 여부를 표시할 것.
   · 시드 값과 소급 계산 값이 다를 경우 **덮어쓰지 말고 병기·차이 표시**(§0 원칙: 유리한 값 선택 금지).
-- **T2. `app_rounds.data`(JSONB) 통계 분석** — Postgres `app_rounds.data` 기반 추가 통계.
-  후보 지표: 회차간 bias 추이(NIST/BF/HDL/LDL), 반복측정 CV·재현성, QC bias와 평가결과 상관, 판정 마진 분포.
-  · 읽기 전용 SQL(집계)만 사용, 화면은 ⑥ 탭 하위 섹션 또는 `/rounds/stats` 신설 검토.
+- ~~**T2. `app_rounds.data`(JSONB) 통계 분석**~~ — **완료(2026-07-26).** `stats.py` + `/rounds/stats` + ⑥탭 하위 섹션.
+  · **`stats.py`** — `rounds.load_store()`에서 읽으므로 **Postgres·파일 폴백 양쪽에서 동작**.
+    ① `bias_summary` 회차·모드·분석물질별 평균/SD/범위 + **한계 대비 마진**(=|평균bias|÷한계, 1.0 초과 시 초과)
+    ② `precision` 채택 2개 반복의 CV, Day1↔Day2 채택값 절대차(재현성)
+    ③ `drift` 회차당 bias 변화 최소제곱 기울기 — **UC·DCM은 다른 측정절차라 절대 합치지 않음**.
+       회차 3개 미만이면 `slope=None`(판단 보류). flag 임계(한계의 25%/회차)는 **임의값이며 경고용**
+    ④ `drop_pattern` 제외된 반복 index(R1/R2/R3) 분포 — 치우치면 측정 순서·장비 안정화 등 **계통 오류** 의심 근거
+  · **`tools/stats_queries.sql`** — Postgres 직접 분석용 참조 쿼리 7종(전부 SELECT).
+    실제 Postgres 16에서 전 쿼리 실행 검증 완료.
+  · **⑥탭 UI** — 표 4종 + 마진 바. 상단·하단에 §0 방법론 경고문 고정 노출.
+  · **⚠️ 설계 원칙:** 이 통계는 **모니터링·진단 전용**이며 반복측정 채택 로직에 관여하지 않음.
+    코드 주석·SQL 헤더·UI·API `note` 필드 4곳에 "판정 통과 목적의 선택 금지"를 명시.
 - ~~**T3. Drive `crmln-app` 사본 정리**~~ — **폐기 결정(2026-07-26).**
   22개 파일을 GitHub main과 전수 대조: **19개 동일, 3개 구버전(`app.py`·`rounds.py`·`private/dashboard.html`),
   이 폴더에만 있는 파일 0개**(`static/`은 빈 폴더). 즉 잃을 내용이 없음.
@@ -211,27 +254,37 @@ HANDOVER_인수인계.md        (이 문서)
 
 ---
 
-## 11. 실제 작업 워크플로 (클라우드 세션 + 폴더 접근 권한)
+## 11. 작업 워크플로
 
-이 계정은 on-computer 실행이 불가하므로 **클라우드 세션 + 로컬 폴더 쓰기 권한** 조합으로 작업합니다.
+### (A) 권장 — on-computer 세션
 
-**표준 절차**
+폴더 `C:\Users\yun76\Documents\GitHub\crmln_web` 를 연결한 상태로 시작하면 Claude가 전 과정을 처리합니다.
 
-1. Claude가 `device_request_folder_access` 로 `C:\Users\yun76\Documents\GitHub\crmln_web` 접근 요청 → 사용자 승인.
-   (승인은 **세션 단위**입니다. 새 세션마다 다시 승인해야 합니다.)
-2. Claude가 클라우드 컨테이너에 `git clone https://github.com/yun7640/crmln_web.git` 으로 정본을 받아
-   그 안에서 코드 수정 + **검증**(gunicorn 헤더 검증, Playwright ⑥탭 렌더, Postgres 경로).
-3. 검증 통과한 파일만 `device_commit_files` 로 **로컬 git 작업트리에 직접 기록**.
-4. 사용자가 **GitHub Desktop에서 변경분 확인 → Commit → Push** → Railway 자동 재배포.
-5. 배포 후 공개 URL에서 실제 동작 확인.
+1. Claude가 파일 직접 수정 (GitHub Desktop에 변경분 자동 표시)
+2. 배포 전 스모크 검증 — Claude의 리눅스 샌드박스에서 실행 가능:
+   `python3 tools/smoke_headers.py` (63) · `bash tools/smoke_gunicorn.sh` (18) 는 **정상 실행됨**.
+   `python3 tools/smoke_tab6.py` (17) 은 **Chromium 다운로드가 네트워크 allowlist에 막혀 실행 불가** →
+   `node --check`로 인라인 JS 문법 + DOM/문구 grep 정적 검증으로 대체하고, 브라우저 렌더는 배포 후 공개 URL에서 확인.
+3. Claude가 `git commit` (첫 `git add` 전에 `git config core.autocrlf input` — 이미 설정됨)
+4. **사용자가 GitHub Desktop에서 Push** (§상단 ⚠️ 참조: Claude 셸에 GitHub 자격증명 없음)
+5. Railway 자동 재배포 → 공개 URL에서 동작 확인 (특히 ⑥탭 "누적 통계 분석" 섹션)
 
-**주의**
+### (B) 클라우드 세션으로 시작해버린 경우
 
-- 로컬 작업트리 파일은 **CRLF**, GitHub 정본은 LF입니다. 내용 비교 시 `tr -d '\r'` 로 정규화해서 비교할 것
+1. Claude가 `device_request_folder_access` 로 위 clone 폴더 접근 요청 → 사용자 승인.
+   (승인은 **세션 단위**. 새 세션마다 다시 승인 필요)
+2. Claude가 컨테이너에 `git clone https://github.com/yun7640/crmln_web.git` 후 그 안에서 수정 + **전체 검증**
+   (여기서는 gunicorn·Playwright·Postgres 전부 실행 가능 — Windows보다 검증 범위가 넓습니다)
+3. 검증 통과한 파일만 `device_commit_files` 로 로컬 git 작업트리에 기록
+4. **사용자가 GitHub Desktop에서 Commit + Push** → Railway 자동 재배포
+
+### 공통 주의
+
+- 로컬 작업트리 파일은 **CRLF**, GitHub 정본은 LF입니다. 내용 비교 시 `tr -d '\r'` 로 정규화할 것
   (그냥 diff하면 전 파일이 바뀐 것처럼 보임). 커밋 시에는 git의 autocrlf가 처리합니다.
 - git 원격은 **HTTPS**여야 함(`git remote -v` 확인, SSH면 `git remote set-url origin https://github.com/yun7640/crmln_web.git`).
-- Claude는 사용자 PC에서 파일 **삭제 불가**. 삭제가 필요하면 `_to_delete/` 하위로 옮기고 사용자에게 알릴 것.
-- 수정 후 반드시 gunicorn/Playwright 검증 습관 유지, 방법론 원칙(§0) 준수.
+- 클라우드 세션의 Claude는 사용자 PC 파일을 **삭제할 수 없습니다.** 삭제가 필요하면 안내만 남기고 사용자가 처리.
+- 수정 후 반드시 스모크 검증 습관 유지, 방법론 원칙(§0) 준수.
 
 ---
 

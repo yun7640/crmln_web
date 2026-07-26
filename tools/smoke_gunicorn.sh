@@ -140,6 +140,16 @@ p = json.loads(r.read().decode('utf-8'))
 check('is_admin 주입', p.get('is_admin') is True, p.get('is_admin'))
 check('2026.7 누적됨', '2026.7' in (p.get('round_labels') or []), p.get('round_labels'))
 
+print('[G5] /rounds/stats 누적 통계')
+r = opener.open(BASE + '/rounds/stats', timeout=30)
+check('/rounds/stats 200', r.status == 200, r.status)
+latin1_ok(r, '/rounds/stats')
+S = json.loads(r.read().decode('utf-8'))
+check('통계 payload 키 완비',
+      all(k in S for k in ('backend', 'bias_summary', 'precision', 'drift', 'drop_pattern', 'note')),
+      sorted(S))
+check('방법론 경고문 포함', '판정' in (S.get('note') or ''), S.get('note'))
+
 print('\n=== %d개 검사 중 실패 %d ===' % (n[0], len(fails)))
 sys.exit(1 if fails else 0)
 PY

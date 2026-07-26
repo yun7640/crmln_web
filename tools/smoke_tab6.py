@@ -213,6 +213,27 @@ def run_browser(have_local_chart):
         manage = page.evaluate("() => (document.getElementById('cumManage')||{}).innerHTML || ''")
         check('관리자 삭제표 렌더(is_admin)', len(manage.strip()) > 0, len(manage))
 
+        # ── 누적 통계 분석 섹션 (/rounds/stats) ──
+        page.wait_for_function(
+            "() => { const e = document.getElementById('cumStats');"
+            " return e && e.querySelectorAll('table').length >= 3; }", timeout=20000)
+        st = page.evaluate("""() => {
+          const e = document.getElementById('cumStats');
+          const b = document.getElementById('cumStatsBackend');
+          return {tables: e.querySelectorAll('table').length,
+                  bars: e.querySelectorAll('.cum-bar').length,
+                  rows: e.querySelectorAll('tbody tr').length,
+                  badge: (b && b.textContent) || '',
+                  text: e.innerText};
+        }""")
+        check('통계 표 3개 이상 렌더', st['tables'] >= 3, st['tables'])
+        check('마진 바 렌더', st['bars'] > 0, st['bars'])
+        check('통계 표에 데이터 행 존재', st['rows'] >= 4, st['rows'])
+        check('저장 백엔드 배지 표시', '회차' in st['badge'], st['badge'])
+        check('방법론 경고문 노출(채택에 관여하지 않음)',
+              '판정' in st['text'] and '채택' in st['text'], st['text'][:120])
+        check('회차 1개 → 드리프트 판단 보류 표기', '판단 보류' in st['text'], st['text'][:200])
+
         check('콘솔 에러 없음', not errors, errors[:3])
 
         browser.close()

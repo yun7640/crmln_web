@@ -12,6 +12,13 @@
 | `smoke_tab6.py` | **⑥ 회차 누적분석 탭이 실제로 렌더되는지** — Chart.js 4개 캔버스가 빈 화면이 아닌지(픽셀 검사), 제출표 행·회차 서브탭·관리자 삭제표가 생기는지, 콘솔 에러가 없는지 |
 | `make_fixture.py` | 위 검사들이 쓰는 **합성 측정지** 생성 |
 
+`stats_queries.sql` 은 검증 스크립트가 아니라 **참조용 SQL 모음**입니다.
+Postgres에서 `app_rounds.data`(JSONB)를 직접 임시 분석할 때 씁니다 — 전부 읽기 전용(SELECT)입니다.
+
+```bash
+psql "$DATABASE_URL" -f tools/stats_queries.sql
+```
+
 ## 실행
 
 ```bash

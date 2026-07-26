@@ -149,10 +149,11 @@ def rounds_add():
     name = os.path.splitext(f.filename)[0] + '_검토.xlsx'
     resp = send_file(bio, as_attachment=True, download_name=name,
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    # HTTP 헤더는 latin-1만 허용 → 한글은 \uXXXX(ASCII)로 인코딩(JS JSON.parse가 복원).
     resp.headers['X-Round-Result'] = json.dumps(
         {'stored': True, 'label': label, 'mode': summary['mode'],
          'n_samples': summary.get('n_samples'), 'n_exceed': summary.get('n_exceed'),
-         'message': msg}, ensure_ascii=False)
+         'message': msg}, ensure_ascii=True)
     return resp
 
 

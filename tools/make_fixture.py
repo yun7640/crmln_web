@@ -111,6 +111,58 @@ def build_dcm(path):
     return path
 
 
+def build_dcm4(path):
+    """DCM 합성 측정지 — **CS 검체 4반복(R1–R4) 레이아웃**.
+
+    2026.7 실제 측정지처럼 CS 검체에 R4가 추가되어 Day2 블록이 한 칸 밀린 형태다.
+    (과거 하드코딩 파서는 이 배치에서 Day2를 통째로 놓쳤다 → 회귀 방지용 fixture)
+    헤더 행(4행)에 'A.value / R1…Rn'을 적어 두어야 열 자동 탐지가 동작한다."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = SHEET
+    ws.cell(1, 1, '합성 검증용 파일 — 실제 측정결과 아님 (synthetic fixture, NOT real data)')
+
+    # 헤더: Day1 = D..H, Day2 = Q..U (R4가 생겨 Day2가 한 칸 밀린 배치)
+    for col, txt in [(4, 'A.value'), (5, 'R1'), (6, 'R2'), (7, 'R3'), (8, 'R4'),
+                     (17, 'A.value'), (18, 'R1'), (19, 'R2'), (20, 'R3'), (21, 'R4')]:
+        ws.cell(4, col, txt)
+
+    def put(row, label, name2, name, a1, r1, a2, r2):
+        if label is not None:
+            ws.cell(row, 2, label); ws.cell(row, 15, label)
+        ws.cell(row, 3, name); ws.cell(row, 16, name2 or name)
+        if a1 is not None:
+            ws.cell(row, 4, a1)
+        for i, v in enumerate(r1):
+            ws.cell(row, 5 + i, v)
+        if a2 is not None:
+            ws.cell(row, 17, a2)
+        for i, v in enumerate(r2):
+            ws.cell(row, 18 + i, v)
+
+    # QC/Control은 3반복 유지(실제 측정지와 동일)
+    put(5, 'QC', 'NIST2', 'NIST1', 200.0, [200.5, 200.8, 201.0], 300.0, [300.4, 300.7, 301.1])
+    put(6, None, 'CFS21-01', 'CFS21-01', 190.0, [190.4, 190.7, 190.9], 190.0, [190.3, 190.6, 191.0])
+    put(7, 'HDL Control', 'HDL CFS21-01', 'HDL CFS21-01', 50.0, [50.2, 50.4, 50.5], 50.0, [50.1, 50.3, 50.6])
+    put(8, None, 'HDL QC2', 'HDL QC2', 40.0, [40.1, 40.3, 40.4], 40.0, [40.2, 40.3, 40.5])
+
+    # CS 검체는 4반복.
+    # CS04는 **중복값이 순위 중앙이 아닌 위치**에 오도록 만든다.
+    #   Day1 [59.9, 60.2, 60.4, 60.4] → 중복(60.4)이 상위 2개
+    #   Day2 [60.0, 60.0, 60.3, 60.5] → 중복(60.0)이 하위 2개
+    # 단순 index 기준으로 자르면 중복값 2개가 채택되어 CV가 0으로 붕괴한다(정밀도가 실제보다
+    # 좋아 보임 → §0 위반). 순위 중앙 2개를 채택하면 CV>0 이 유지되어야 한다.
+    cs = {'CS01': ([55.4, 55.7, 55.9, 55.8], [55.5, 55.8, 56.0, 55.9]),
+          'CS02': ([46.2, 46.5, 46.7, 46.6], [46.3, 46.6, 46.8, 46.7]),
+          'CS03': ([35.8, 36.0, 36.2, 36.1], [35.9, 36.1, 36.3, 36.2]),
+          'CS04': ([59.9, 60.2, 60.4, 60.4], [60.0, 60.0, 60.3, 60.5])}
+    for i, (nm, (r1, r2)) in enumerate(cs.items()):
+        put(9 + i, 'HDL Sample' if i == 0 else None, nm, nm, None, r1, None, r2)
+
+    wb.save(path)
+    return path
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--out', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), '_fixtures'))
@@ -118,8 +170,10 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     u = build_uc(os.path.join(a.out, 'fixture_UC_합성.xlsx'))
     d = build_dcm(os.path.join(a.out, 'fixture_DCM_합성.xlsx'))
+    d4 = build_dcm4(os.path.join(a.out, 'fixture_DCM4_합성.xlsx'))
     print(u)
     print(d)
+    print(d4)
 
 
 if __name__ == '__main__':

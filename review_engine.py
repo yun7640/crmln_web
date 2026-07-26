@@ -3,7 +3,7 @@
 전략: 사용자 검토 템플릿(assets/select_template.xlsx)에 업로드 측정값을 '주입'하여
 동적 선택 시트(제출결과_선택검토 → 2026.7_결과선택; 수식·조건부서식·드롭다운 100% 보존)를
 그대로 재현하고, 정적 요약 시트(2026.7 측정결과 검토)를 추가한다."""
-import io, os, openpyxl
+import io, os, re, openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.cell.cell import MergedCell
@@ -30,7 +30,14 @@ def _num(v):
 
 
 def _median(a):
-    return sorted(a)[1]
+    """반복 n개의 median. n=3이면 종전 구현(sorted[1])과 결과가 같고,
+    짝수 n(2026.7 DCM의 4반복)에서는 가운데 두 값의 평균을 돌려준다.
+    ★ 종전에는 `sorted(a)[1]`로 고정되어 있어 4반복에서 median이 2번째 작은 값이 되었다."""
+    s = sorted(a)
+    n = len(s)
+    if n == 0:
+        raise ValueError('빈 반복측정값')
+    return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2.0
 
 
 def combo_pick(BF, HDL, LDL):
@@ -279,37 +286,111 @@ def _build_review_sheet(wb, samples, qc):
 #                 HDL Sample CS01–CS04(9–12).  판정: TC ±1%, HDL ±1 mg/dL.
 # ============================================================
 DCM_CV_GUARD = 15.0  # 동일 검체 반복 CV(%)가 이보다 크면 데이터 정렬 오류로 보고 해당 Day 제외
+DCM_HEADER_ROW = 4   # 'A.value / R1 / R2 / R3 [/ R4 …]' 헤더가 있는 행
 
 def _is_dcm(ws):
     return str(ws.cell(7, 2).value or '').strip().startswith('HDL Control')
 
-def _cv3(reps):
-    m = sum(reps) / 3.0
-    return (sum((x - m) ** 2 for x in reps) / 3.0) ** 0.5 / m * 100 if m else 999
+def _cvn(reps):
+    """반복 n개의 CV(%). 모집단 SD 기준(엑셀 측정지 표기와 동일 관례)."""
+    reps = [x for x in reps if x is not None]
+    n = len(reps)
+    if n < 2:
+        return 999
+    m = sum(reps) / float(n)
+    return (sum((x - m) ** 2 for x in reps) / float(n)) ** 0.5 / m * 100 if m else 999
+
+_cv3 = _cvn  # 하위 호환(구 이름)
 
 def _dcm_pick(reps):
-    m = _median(reps); dev = [abs(x - m) for x in reps]
-    drop = dev.index(max(dev)); keep = [k for k in range(3) if k != drop]
-    sel = (reps[keep[0]] + reps[keep[1]]) / 2.0
-    cv = (((reps[keep[0]] - sel) ** 2 + (reps[keep[1]] - sel) ** 2) / 2.0) ** 0.5 / sel * 100 if sel else 0
+    """R1…Rn(n≥3) 중 **median 편차가 큰 순으로 n−2개를 제외**하고 2개를 채택한다.
+
+    · n=3 → 1개 제외(종전과 동일), n=4 → 2개 제외. 2026.7 측정지부터 CS 검체가 4반복이다.
+    · 채택 기준은 **정밀도(median 근접도)뿐**이다. 값의 크기나 bias 방향으로 고르지 않는다(§0).
+    · ★ 동점 처리: 같은 값이 중복 측정되면 median 편차가 여러 개 동점이 된다. 이때 단순히
+      index 순으로 자르면 **동일한 두 값이 채택되어 CV가 0으로 나오는** 일이 생긴다(정밀도가
+      실제보다 좋아 보임 → §0 위반). 그래서 편차가 같으면 **정렬 순위가 중앙에서 먼 쪽을 먼저
+      제외**한다. n이 짝수일 때 이 규칙은 "순위 중앙 2개 채택"(양 극단 제외)과 같아지며,
+      중복값이 있어도 인위적으로 CV를 낮추지 않는다.
+    반환: (drop[list, 오름차순], keep[list], sel[채택 2개 평균], cv[채택 2개의 CV%])"""
+    vals = [x for x in reps if x is not None]
+    n = len(vals)
+    if n < 2:
+        raise ValueError('DCM 반복측정값이 2개 미만입니다.')
+    if n == 2:
+        keep, drop = [0, 1], []
+    else:
+        m = _median(vals)
+        rank = {k: i for i, k in enumerate(sorted(range(n), key=lambda k: (vals[k], k)))}
+        center = (n - 1) / 2.0
+        # 편차 큰 순 → 동점이면 순위가 중앙에서 먼 순 → 그래도 동점이면 index 순(재현성 고정)
+        order = sorted(range(n),
+                       key=lambda k: (-abs(vals[k] - m), -abs(rank[k] - center), k))
+        drop = sorted(order[:n - 2])
+        keep = sorted(order[n - 2:])
+    a, b = vals[keep[0]], vals[keep[1]]
+    sel = (a + b) / 2.0
+    cv = (((a - sel) ** 2 + (b - sel) ** 2) / 2.0) ** 0.5 / sel * 100 if sel else 0
     return drop, keep, sel, cv
 
+
+def _dcm_day_cols(ws):
+    """Day1/Day2 블록의 열 위치를 **헤더에서 자동 탐지**한다.
+
+    과거에는 열을 하드코딩(Day2 = P/Q/R/S)했는데, 2026.7 측정지는 CS 검체 반복이 4개(R1–R4)로
+    늘면서 Day2 블록이 한 칸 밀렸다. 그 결과 **Day2 전체가 오류 없이 조용히 누락**되었다.
+    → 헤더 행에서 'A.value' 와 'R1','R2',… 를 찾아 블록마다 열을 결정한다.
+    반환: {day: {'a': A.value열, 'r': [R열…], 'label': 구분열, 'name': 검체명열}}"""
+    hdr = DCM_HEADER_ROW
+    maxc = max(ws.max_column or 0, 30)
+    blocks = []
+    for c in range(1, maxc + 1):
+        v = str(ws.cell(hdr, c).value or '').strip().lower().replace(' ', '')
+        if v in ('a.value', 'a.값', 'assignedvalue'):
+            rcols = []
+            k = c + 1
+            while k <= maxc:
+                t = str(ws.cell(hdr, k).value or '').strip().upper().replace(' ', '')
+                if re.fullmatch(r'R\d+', t or ''):
+                    rcols.append(k); k += 1
+                else:
+                    break
+            if len(rcols) >= 3:
+                blocks.append({'a': c, 'r': rcols, 'label': c - 2, 'name': c - 1})
+    if len(blocks) < 2:      # 헤더를 못 찾으면 종전 하드코딩으로 폴백
+        return {1: {'a': 4, 'r': [5, 6, 7], 'label': 2, 'name': 3},
+                2: {'a': 16, 'r': [17, 18, 19], 'label': 14, 'name': 15}}
+    return {1: blocks[0], 2: blocks[1]}
+
+
+def _dcm_reps(ws, r, cols):
+    """해당 행·블록의 반복값. 뒤쪽 빈 칸은 잘라내 실제 반복 개수만 돌려준다."""
+    vals = [_num(ws.cell(r, c).value) for c in cols['r']]
+    while vals and vals[-1] is None:
+        vals.pop()
+    return vals
+
+
 def _parse_dcm(ws):
-    """DCM 측정지(5–12행) → (qc, samples). CV>가드 인 Day는 정렬오류로 제외."""
-    DAY = {1: (4, (5, 6, 7)), 2: (16, (17, 18, 19))}
+    """DCM 측정지(5–12행) → (qc, samples). CV>가드 인 Day는 정렬오류로 제외.
+    반복 개수는 측정지에 채워진 만큼(3개 또는 4개) 자동 인식한다."""
+    DAY = _dcm_day_cols(ws)
     qc = []
     for r, an in [(5, 'TC'), (6, 'TC'), (7, 'HDL'), (8, 'HDL')]:
-        name = str(ws.cell(r, 3).value or '').strip()
-        if not name:
+        if not str(ws.cell(r, 3).value or '').strip():
             continue
-        for day, (av, rc) in DAY.items():
-            A = _num(ws.cell(r, av).value); reps = [_num(ws.cell(r, c).value) for c in rc]
-            if A is None or A == 0 or any(x is None for x in reps):
+        for day, cols in DAY.items():
+            # 관리물질 이름은 Day 블록마다 다르다(Day1 NIST1 / Day2 NIST2) → 블록의 이름 열에서 읽는다.
+            name = (str(ws.cell(r, cols['name']).value or '').strip()
+                    or str(ws.cell(r, 3).value or '').strip())
+            A = _num(ws.cell(r, cols['a']).value)
+            reps = _dcm_reps(ws, r, cols)
+            if A is None or A == 0 or len(reps) < 3 or any(x is None for x in reps):
                 continue
-            if _cv3(reps) > DCM_CV_GUARD:
+            if _cvn(reps) > DCM_CV_GUARD:
                 continue
-            mean = sum(reps) / 3.0
-            qc.append(dict(analyte=an, name=name, day=day,
+            mean = sum(reps) / float(len(reps))
+            qc.append(dict(analyte=an, name=name, day=day, n_reps=len(reps),
                            biaspct=(mean - A) / A * 100,
                            biasmgdl=(mean - A) if an == 'HDL' else None))
     samples = {}
@@ -318,9 +399,9 @@ def _parse_dcm(ws):
         if not name.upper().replace(' ', '').startswith('CS'):
             continue
         per = {}
-        for day, rc in {1: (5, 6, 7), 2: (17, 18, 19)}.items():
-            reps = [_num(ws.cell(r, c).value) for c in rc]
-            if all(x is not None for x in reps) and _cv3(reps) <= DCM_CV_GUARD:
+        for day, cols in DAY.items():
+            reps = _dcm_reps(ws, r, cols)
+            if len(reps) >= 3 and all(x is not None for x in reps) and _cvn(reps) <= DCM_CV_GUARD:
                 per[day] = reps
         if per:
             samples[name] = per
@@ -329,29 +410,33 @@ def _parse_dcm(ws):
 
 def _extract_dcm_rows(ws):
     """DCM 측정지(5–12행) → Day별 원자료 행(Excel-mirror 표시용).
-    반환: {day: [ {label, name, analyte, is_sample, A, reps[3], mean3, cv3} ]}"""
-    DAY = {1: (2, 3, 4, (5, 6, 7)), 2: (14, 15, 16, (17, 18, 19))}  # (label열, name열, 지정값열, R열)
+    반환: {day: [ {label, name, analyte, is_sample, A, reps[n], mean_n, cv_n, n_reps} ]}"""
+    DAY = _dcm_day_cols(ws)
     SPEC = [(5, 'TC', False), (6, 'TC', False), (7, 'HDL', False), (8, 'HDL', False),
             (9, 'HDL', True), (10, 'HDL', True), (11, 'HDL', True), (12, 'HDL', True)]
     out = {1: [], 2: []}
     for r, an, is_s in SPEC:
-        label = str(ws.cell(r, 2).value or '').strip()
-        name = str(ws.cell(r, 3).value or '').strip()
-        if not (label or name):
+        if not (str(ws.cell(r, 2).value or '').strip() or str(ws.cell(r, 3).value or '').strip()):
             continue
-        if is_s and not name.upper().replace(' ', '').startswith('CS'):
-            continue
-        for day, (lc, nc, av, rc) in DAY.items():
-            reps = [_num(ws.cell(r, c).value) for c in rc]
-            if any(x is None for x in reps):
+        for day, cols in DAY.items():
+            # 구분·검체명도 Day 블록별 열에서 읽는다(Day2는 NIST2 등 이름이 다름).
+            label = (str(ws.cell(r, cols['label']).value or '').strip()
+                     or str(ws.cell(r, 2).value or '').strip())
+            name = (str(ws.cell(r, cols['name']).value or '').strip()
+                    or str(ws.cell(r, 3).value or '').strip())
+            if is_s and not name.upper().replace(' ', '').startswith('CS'):
                 continue
-            if _cv3(reps) > DCM_CV_GUARD:
+            reps = _dcm_reps(ws, r, cols)
+            if len(reps) < 3 or any(x is None for x in reps):
                 continue
-            A = _num(ws.cell(r, av).value)
-            mean3 = sum(reps) / 3.0
+            if _cvn(reps) > DCM_CV_GUARD:
+                continue
+            A = _num(ws.cell(r, cols['a']).value)
+            mean_n = sum(reps) / float(len(reps))
             disp = (name or label) if is_s else (label or name)
             out[day].append(dict(label=disp, name=name, analyte=an, is_sample=is_s,
-                                 A=A, reps=reps, mean3=mean3, cv3=_cv3(reps)))
+                                 A=A, reps=reps, n_reps=len(reps),
+                                 mean3=mean_n, cv3=_cvn(reps)))
     return out
 
 def _process_dcm(up, ms):
@@ -425,15 +510,22 @@ def _build_dcm_review(wb, qc, samples, rows=None):
     R += 1
 
     # ② 제출 결과 선택 (측정지 재현 Day1/Day2 — HDL-C UC 검토와 동일 방식)
-    section('② CRMLN 제출 결과 선택 (HDL-C DCM 측정지 재현 · R1/R2/R3 → 채택 2반복)',
-            '정밀도 기반: median 대비 편차가 가장 큰 replicate 1개 제외(취소선) → 나머지 2개 평균 채택. QC/Control은 제출 대상 아님(미제출).')
-    hdr = ['구분 · 검체', '지정값', 'R1', 'R2', 'R3', 'mean(3)', 'cv%(3)', '채택(2/3)']
     rows = rows or {1: [], 2: []}
     days_present = [d for d in (1, 2) if rows.get(d)]
     if not days_present:  # 폴백: rows 미제공 시 samples로 최소 구성
         days_present = sorted({d for v in samples.values() for d in v})
+    # 측정지의 반복 개수(3 또는 4)를 그대로 따른다.
+    nrep = max([rr.get('n_reps', len(rr['reps'])) for d in days_present for rr in (rows.get(d) or [])]
+               + [len(v) for s in samples.values() for v in s.values()] or [3])
+    section('② CRMLN 제출 결과 선택 (HDL-C DCM 측정지 재현 · R1–R%d → 채택 2반복)' % nrep,
+            '정밀도 기반: median 대비 편차가 큰 replicate %d개 제외(취소선) → 나머지 2개 평균 채택. '
+            'QC/Control은 제출 대상 아님(미제출).' % max(0, nrep - 2))
+    NR = 2  # 반복값 시작 열 offset(구분·지정값 다음)
+    hdr = ['구분 · 검체', '지정값'] + ['R%d' % (k + 1) for k in range(nrep)] + \
+          ['mean(%d)' % nrep, 'cv%%(%d)' % nrep, '채택(2/%d)' % nrep]
+    NC2 = len(hdr)
     for day in days_present:
-        M(R, 1, NC, 'Day %d' % day, bold=True, size=10, color='FFFFFF', fill='6B7683', align='center'); R += 1
+        M(R, 1, max(NC, NC2), 'Day %d' % day, bold=True, size=10, color='FFFFFF', fill='6B7683', align='center'); R += 1
         for i, t in enumerate(hdr):
             C(R, i + 1, t, bold=True, size=9.5, color='FFFFFF', fill=NAVY, align='center', border=True)
         R += 1
@@ -444,20 +536,22 @@ def _build_dcm_review(wb, qc, samples, rows=None):
             C(R, 2, '' if rr['A'] in (None, 0) else round(rr['A'], 2), size=9, align='center', border=True)
             if rr['is_sample']:
                 drop, keep, sel, cv = _dcm_pick(reps)
-                for k in range(3):
-                    cell = C(R, 3 + k, round(reps[k], 2), size=9, align='center', border=True,
+                for k in range(nrep):
+                    v = '' if k >= len(reps) else round(reps[k], 2)
+                    cell = C(R, NR + 1 + k, v, size=9, align='center', border=True,
                              color=(GREEN if k in keep else RED2))
-                    if k == drop:
+                    if k in drop:
                         cell.font = STRIKE
-                C(R, 6, round(rr['mean3'], 2), size=9, align='center', color='888888', border=True)
-                C(R, 7, round(rr['cv3'], 2), size=9, align='center', color='888888', border=True)
-                C(R, 8, round(sel, 2), bold=True, size=9.5, color=GREEN, align='center', border=True)
+                C(R, NR + nrep + 1, round(rr['mean3'], 2), size=9, align='center', color='888888', border=True)
+                C(R, NR + nrep + 2, round(rr['cv3'], 2), size=9, align='center', color='888888', border=True)
+                C(R, NR + nrep + 3, round(sel, 2), bold=True, size=9.5, color=GREEN, align='center', border=True)
             else:
-                for k in range(3):
-                    C(R, 3 + k, round(reps[k], 2), size=9, align='center', border=True)
-                C(R, 6, round(rr['mean3'], 2), size=9, align='center', border=True)
-                C(R, 7, round(rr['cv3'], 2), size=9, align='center', border=True)
-                C(R, 8, '미제출', size=8.5, italic=True, color='888888', align='center', border=True)
+                for k in range(nrep):
+                    C(R, NR + 1 + k, '' if k >= len(reps) else round(reps[k], 2),
+                      size=9, align='center', border=True)
+                C(R, NR + nrep + 1, round(rr['mean3'], 2), size=9, align='center', border=True)
+                C(R, NR + nrep + 2, round(rr['cv3'], 2), size=9, align='center', border=True)
+                C(R, NR + nrep + 3, '미제출', size=8.5, italic=True, color='888888', align='center', border=True)
             R += 1
         R += 1
 
@@ -475,7 +569,8 @@ def _build_dcm_review(wb, qc, samples, rows=None):
         M(R, 1, NC, t, size=10, wrap=True, color='333333'); R += 1
     M(R, 1, NC, '※ 본 시트는 업로드 파일로부터 자동 생성됨. 공식 CRMLN 인증 판정은 CDC 평가보고서(PS)에 따름.', size=8.5, color='888888', italic=True); R += 1
 
-    for i, w in enumerate([20, 9, 9, 9, 9, 9, 8, 11]): ws.column_dimensions[get_column_letter(i + 1)].width = w
+    for i, w in enumerate([20, 9] + [9] * nrep + [9, 8, 11]):
+        ws.column_dimensions[get_column_letter(i + 1)].width = w
     ws.sheet_view.showGridLines = False
     from openpyxl.worksheet.properties import PageSetupProperties
     ws.page_setup.orientation = 'landscape'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
@@ -533,7 +628,9 @@ def _summarize_dcm(ws):
             if not reps:
                 continue
             drop, keep, sel, cv = _dcm_pick(reps)
-            subs.append(dict(name=name, day=day, drop=drop + 1, keep=[k + 1 for k in keep],
+            # drop은 반복이 4개일 수 있으므로 **리스트**로 저장한다(구 데이터는 정수 — 소비처에서 양쪽 처리).
+            subs.append(dict(name=name, day=day, drop=[k + 1 for k in drop],
+                             keep=[k + 1 for k in keep], n_reps=len(reps),
                              HDL=round(sel, 2), cv=round(cv, 3), reps=reps))
     n_exc = sum(1 for q in qc if _verdict(q['analyte'], q['biaspct'], q['biasmgdl'])[1] is False)
     return dict(mode='dcm', qc=_qc_list(qc),

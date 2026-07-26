@@ -283,6 +283,91 @@ def main():
           S2.get('note_reference'))
     c.post('/rounds/delete', data={'label': '%d.1' % lo, 'ajax': '1'})
 
+    print('[6d] HDL-C DCM — Day2 열 자동 탐지 · n중 2개 채택')
+    import review_engine as RE  # noqa: E402
+    # (1) median 일반화 — n=3은 종전(sorted[1])과 동일해야 하고, n=4는 가운데 두 값 평균
+    check('median n=3 회귀', RE._median([3, 1, 2]) == 2 and RE._median([5, 5, 9]) == 5)
+    check('median n=4 = 가운데 2개 평균', abs(RE._median([10, 10.1, 10.2, 10.3]) - 10.15) < 1e-9,
+          RE._median([10, 10.1, 10.2, 10.3]))
+    # (2) 채택 규칙
+    d, k, s, _cv = RE._dcm_pick([1, 2, 3])
+    check('n=3 → 1개 제외·2개 채택', d == [0] and k == [1, 2], (d, k))
+    d, k, s, _cv = RE._dcm_pick([10, 10.1, 10.2, 10.3])
+    check('n=4 → 극단 2개 제외(순위 중앙 2개 채택)', d == [0, 3] and k == [1, 2], (d, k))
+    # 중복값이 있어도 동일값 2개를 채택해 CV를 0으로 만들지 않아야 한다(§0)
+    d, k, s, cv = RE._dcm_pick([50.935, 50.631, 50.631, 50.813])
+    check('중복값 — 인위적 CV 0 회피', cv > 0.1 and abs(s - 50.722) < 1e-6, (k, s, cv))
+    d, k, s, cv = RE._dcm_pick([48.212, 48.031, 47.911, 47.911])
+    check('중복값 — 채택값이 순위 중앙 평균', abs(s - 47.971) < 1e-6, (k, s))
+    # (3) 채택은 정밀도 기준뿐 — 값의 크기 순으로 고르지 않는다
+    d, k, s, _cv = RE._dcm_pick([100.0, 50.0, 50.1, 50.2])
+    check('이상치 1개는 반드시 제외', 0 in d, (d, k))
+    # (4) Day 블록 열 자동 탐지 — Day2가 한 칸 밀린 레이아웃에서도 잡아야 한다
+    import openpyxl as _ox  # noqa: E402
+    wb = _ox.Workbook(); sh = wb.active
+    for _c, _t in [(4, 'A.value'), (5, 'R1'), (6, 'R2'), (7, 'R3'), (8, 'R4'),
+                   (17, 'A.value'), (18, 'R1'), (19, 'R2'), (20, 'R3'), (21, 'R4')]:
+        sh.cell(RE.DCM_HEADER_ROW, _c, _t)
+    cols = RE._dcm_day_cols(sh)
+    check('Day1 열 탐지', cols[1]['a'] == 4 and cols[1]['r'] == [5, 6, 7, 8], cols[1])
+    check('Day2 열 탐지(밀린 레이아웃)', cols[2]['a'] == 17 and cols[2]['r'] == [18, 19, 20, 21], cols[2])
+    wb2 = _ox.Workbook(); sh2 = wb2.active
+    for _c, _t in [(4, 'A.value'), (5, 'R1'), (6, 'R2'), (7, 'R3'),
+                   (16, 'A.value'), (17, 'R1'), (18, 'R2'), (19, 'R3')]:
+        sh2.cell(RE.DCM_HEADER_ROW, _c, _t)
+    cols2 = RE._dcm_day_cols(sh2)
+    check('구 레이아웃(3반복)도 그대로 탐지', cols2[2]['a'] == 16 and cols2[2]['r'] == [17, 18, 19], cols2[2])
+    check('헤더 없으면 종전 하드코딩으로 폴백',
+          RE._dcm_day_cols(_ox.Workbook().active)[2]['a'] == 16)
+    # (5) 요약 결과 구조 — drop이 리스트이고 Day1·Day2가 모두 들어와야 한다
+    with open(dcm_path, 'rb') as f:
+        sm = RE.summarize_round(f.read())
+    check('DCM 자동 감지', sm.get('mode') == 'dcm', sm.get('mode'))
+    check('Day1·Day2 모두 파싱(조용한 누락 없음)',
+          {x['day'] for x in sm['samples']} == {1, 2}, sorted({x['day'] for x in sm['samples']}))
+    check('QC도 Day1·Day2 모두', {q['day'] for q in sm['qc']} == {1, 2},
+          sorted({q['day'] for q in sm['qc']}))
+    check('drop은 리스트', all(isinstance(x['drop'], list) for x in sm['samples']))
+    check('채택은 항상 2개', all(len(x['keep']) == 2 for x in sm['samples']))
+    check('제외 개수 = n_reps - 2',
+          all(len(x['drop']) == x['n_reps'] - 2 for x in sm['samples']),
+          [(x['n_reps'], x['drop']) for x in sm['samples']])
+    check('drop·keep이 서로 겹치지 않음',
+          all(not (set(x['drop']) & set(x['keep'])) for x in sm['samples']))
+    # (5b) 4반복·Day2 밀림 레이아웃 fixture를 업로드 경로로 end-to-end 검증
+    dcm4_path = make_fixture.build_dcm4(os.path.join(fx, 'fixture_DCM4.xlsx'))
+    with open(dcm4_path, 'rb') as f:
+        r = c.post('/rounds/add', data={'file': (f, '4반복_DCM.xlsx'), 'label': '2027.1'},
+                   content_type='multipart/form-data')
+    check('4반복 DCM 업로드 200', r.status_code == 200, r.data[:200])
+    assert_latin1_headers(r, '/rounds/add(4반복 DCM)')
+    with open(dcm4_path, 'rb') as f:
+        sm4 = RE.summarize_round(f.read())
+    check('4반복 fixture: Day1·Day2 모두 파싱',
+          {x['day'] for x in sm4['samples']} == {1, 2}, sorted({x['day'] for x in sm4['samples']}))
+    check('4반복 fixture: n_reps=4', all(x['n_reps'] == 4 for x in sm4['samples']),
+          [x['n_reps'] for x in sm4['samples']])
+    check('4반복 fixture: 2개씩 제외', all(len(x['drop']) == 2 for x in sm4['samples']))
+    check('4반복 fixture: Day2 QC 이름이 Day2 열에서 읽힘',
+          any(q['name'] == 'NIST2' and q['day'] == 2 for q in sm4['qc']),
+          [(q['name'], q['day']) for q in sm4['qc']])
+    # CS04는 중복값이 순위 중앙이 아닌 위치에 있다 → 중복 2개를 채택해 CV가 0이 되면 안 된다.
+    cs04 = [x for x in sm4['samples'] if x['name'] == 'CS04']
+    check('중복값이 순위 중앙이 아니면 CV가 0으로 붕괴하지 않음',
+          len(cs04) == 2 and all(x['cv'] > 0 for x in cs04),
+          [(x['day'], x['reps'], x['keep'], x['cv']) for x in cs04])
+    c.post('/rounds/delete', data={'label': '2027.1', 'ajax': '1'})
+
+    # (6) drop 리스트를 stats가 집계할 수 있어야 한다(구 정수 형식도 호환)
+    import stats as _S2  # noqa: E402
+    mixed = {'2026.7': {'label': '2026.7',
+                        'uc': {'mode': 'uc', 'qc': [], 'samples': [{'drop': 2, 'n_reps': 3}]},
+                        'dcm': {'mode': 'dcm', 'qc': [], 'samples': [{'drop': [1, 4], 'n_reps': 4}]}}}
+    dp = _S2.drop_pattern(mixed)
+    check('drop 정수·리스트 혼재 집계', dp['total'] == 3, dp)
+    check('R4까지 집계', dp['counts'].get('R4') == 1, dp['counts'])
+    check('균등 기대치는 실제 반복 개수 기준', dp['n_reps'] == 4 and abs(dp['expected_each'] - 0.75) < 1e-9, dp)
+
     print('[7] /rounds/delete (관리자, ajax)')
     r = c.post('/rounds/delete', data={'label': '2026.7', 'mode': 'dcm', 'ajax': '1'})
     check('/rounds/delete ajax 200', r.status_code == 200, r.data[:200])

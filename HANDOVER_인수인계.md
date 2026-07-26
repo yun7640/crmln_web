@@ -129,7 +129,14 @@ HANDOVER_인수인계.md        (이 문서)
 - **판정 기준(MEMBER):** TC ±1%, BF ±2%(LDL 준용), HDL ±1 mg/dL, LDL ±2%.
 - **β-정량:** BF(하부분획)=LDL+HDL; LDL-C=BF−HDL.
 - **UC 선택 로직(combo_pick):** CS 검체 Day별 R1/R2/R3 중 BF·HDL median 상대편차 합이 최대인 1개 제외 → 2개 채택. **BF·HDL·LDL 동일 R index 잠금**(LDL=BF−HDL 정합). QC·Control은 제출 안 함(전체 3반복 사용, batch 정확도 확인용).
-- **DCM(_is_dcm):** 측정지 7행 2열이 'HDL Control'로 시작하면 DCM. 행 구성: 5=NIST(TC),6=CFS21-01(TC),7=HDL CFS21-01(HDL Control),8=HDL QC2(HDL),9–12=CS01–CS04. Day1 R열=(5,6,7)·A열=4, Day2 R열=(17,18,19)·A열=16. **동일검체 반복 CV>15%인 Day는 정렬오류로 제외(DCM_CV_GUARD=15).** _dcm_pick: median 이상치 1개 제외 → 2개 평균 채택.
+- **DCM(_is_dcm):** 측정지 7행 2열이 'HDL Control'로 시작하면 DCM. 행 구성: 5=NIST(TC),6=CFS21-01(TC),7=HDL CFS21-01(HDL Control),8=HDL QC2(HDL),9–12=CS01–CS04.
+  · **★ 열은 하드코딩하지 않는다.** `_dcm_day_cols()`가 헤더 행(`DCM_HEADER_ROW=4`)의 `A.value`·`R1…Rn`을
+    찾아 Day1/Day2 블록 열을 자동 탐지한다(구 3반복 레이아웃 = Day1 D/E,F,G · Day2 P/Q,R,S,
+    2026.7 4반복 레이아웃 = Day1 D/E,F,G,H · Day2 Q/R,S,T,U). 헤더가 없으면 구 하드코딩으로 폴백.
+  · **동일검체 반복 CV>15%인 Day는 정렬오류로 제외(DCM_CV_GUARD=15).**
+  · **_dcm_pick(2/n):** median 편차가 큰 순으로 **n−2개** 제외 → 2개 평균 채택(3반복=1개, 4반복=2개 제외).
+    편차 동점 시 **정렬 순위가 중앙에서 먼 쪽을 먼저 제외** — 중복 측정값 때문에 CV가 인위적으로 0이 되는 것을 막는다.
+    반환하는 `drop`은 **리스트**다(구 데이터는 정수이므로 소비처에서 양쪽 처리).
 - **시트명:** UC 검토 시트 = `HDLC UC 검토`(구 "2026.7 측정결과 검토"), DCM = `HDLC DCM 검토`. 동적 선택 시트 = `2026.7_결과선택`(템플릿 `제출결과_선택검토` 리네임).
 - **summarize_round(bytes):** UC/DCM 자동감지 → 누적 저장용 compact dict(qc, qc_bias, samples, n_* 등) 반환.
 - HDLC-DCM 참조값(PS0126): CS01=55.66, CS02=46.50, CS03=35.98, CS04=60.08 mg/dL. Lab 509는 2026.1 DCM 미인증(bias −1.50).
@@ -148,6 +155,9 @@ HANDOVER_인수인계.md        (이 문서)
 ## 6. private/dashboard.html (6탭 대시보드)
 
 - 탭: ① **HDL-C UC 측정결과 검토** ② 평가보고서 경향분석 ③ QC–평가 관련성 ④ HDL-C DCM ⑤ BF 하부분획 ⑥ **회차 누적분석**.
+- ④ HDL-C DCM 탭 하단에 **CRMLN 제출 결과 선택(R1–R4 → 2개)** 표가 있음(①탭 ③ 선택 표와 동일 방식).
+  원자료는 파일 내 `const DCM_SEL` 상수. **채택 JS(`dcmPick`)는 서버 `review_engine._dcm_pick`과 반드시 동일하게 유지할 것**
+  (수정 시 Python↔JS 교차 검증 필요 — v13에서 616건 일치 확인).
 - ①–⑤: 커스텀 인라인 SVG 차트(외부 라이브러리 없음). 데이터는 파일 내 인라인 JS 상수.
 - ⑥ 회차 누적분석: 별도 `#t6` 패널 + `cum-` 접두 스코프 CSS. **Chart.js(CDN)** 로드, 탭 첫 클릭 시 `initCum()`이 `/rounds/data`를 fetch해서 렌더. 경향 4그래프 + 회차 제출표(UC/DCM 선택 2/3) + **관리자용 중복 삭제표**(is_admin일 때만, `/rounds/delete` ajax). 업로드(회차 추가)도 이 탭에서 가능.
 - 탭 전환 JS 배열에 't6' 포함되어야 함. 다크모드 전환 시 ⑥ 차트 색 갱신 로직 있음.
@@ -225,6 +235,32 @@ HANDOVER_인수인계.md        (이 문서)
     Postgres 저장 형태(레코드 최상위에 `reference`가 없고 요약 JSONB 안에만 있는 형태)를 재현해
     참고용 판정·드리프트 제외가 동작함을 확인. `smoke_tab6.py`는 여전히 SKIP(아래 §11 참조) —
     `node --check` 문법 검증 + ⑥탭 DOM·문구 12종 정적 확인으로 대체.
+
+- **v13 (2026-07-26): HDL-C DCM 제출 선택(2/4) + Day2 누락 버그 수정.** ★ 중요
+  · **[버그] DCM Day2가 조용히 누락되고 있었음.** `_parse_dcm`이 Day2를 P/Q/R/S열로 하드코딩했는데,
+    2026.7 측정지는 CS 검체 반복이 4개(R1–R4)로 늘어 Day2 블록이 **한 칸 밀린 Q/R/S/T/U**였음.
+    그 결과 `summarize_round`가 **Day1만 4건, Day2는 0건**을 반환하고도 오류를 내지 않았음.
+    → `_dcm_day_cols()`가 헤더 행(4행)의 `A.value`·`R1…Rn`을 찾아 **열을 자동 탐지**하도록 교체.
+      헤더가 없으면 종전 하드코딩으로 폴백하므로 과거 파일도 그대로 읽힘.
+    → 관리물질 이름도 Day 블록별 열에서 읽음(Day1 NIST1 / Day2 NIST2 구분).
+  · **[버그] `_median(a)`가 `sorted(a)[1]` 하드코딩**이었음. n=3에서는 맞지만 4반복에서는
+    "2번째 작은 값"이 median이 되어 이상치 판정이 왜곡됨 → 일반 median으로 교체(n=3 결과는 동일, 회귀 검증함).
+  · **채택 규칙 2/n (사용자 확정):** CS 검체 반복이 4개이므로 **median 편차가 큰 순으로 n−2개 제외**.
+    ★ 동점 처리 주의 — 같은 값이 중복 측정되면 편차 동점이 생기고, 단순 index 순으로 자르면
+    **동일한 두 값이 채택되어 CV가 0**으로 나옴(정밀도가 실제보다 좋아 보임 → §0 위반).
+    그래서 편차 동점 시 **정렬 순위가 중앙에서 먼 쪽을 먼저 제외**한다(= 짝수 n에서 "순위 중앙 2개 채택").
+    실제 2026.7 데이터에서 CS03 Day2·CS04 Day1이 이 경우에 해당했음.
+  · `samples[].drop`이 **정수 → 리스트**로 변경됨(4반복은 2개 제외). `stats.drop_pattern`·⑥탭은
+    구 정수 형식도 함께 처리하며, 균등 기대치는 실제 반복 개수(3 또는 4)로 계산.
+  · **④ HDL-C DCM 탭에 "CRMLN 제출 결과 선택" 표 추가** — ③ UC 탭과 동일 방식.
+    Day1·Day2 병렬 표(측정지 배열 재현), 채택=굵게/제외=취소선, HDL Control ±1 mg/dL 유효성 게이트,
+    검체별 제출 요약(Day1·Day2 채택값·Day차·평균). 기본은 정밀도(median) 고정이고
+    민감도 옵션(최소분산쌍·높은값/낮은값 우선)은 선택 시 **경고 배너**가 뜸.
+    DCM은 HDL-C 단일 항목이라 UC의 BF·HDL·LDL index 잠금은 적용하지 않음.
+  · 화면의 JS 채택 로직과 서버 `_dcm_pick`이 어긋나면 안 되므로, 실제 데이터 16건 + 무작위 600건
+    **총 616건을 Python↔JS 교차 실행해 채택 index·채택값이 완전히 일치함을 확인**.
+  · 검증: `smoke_headers.py` **132/132**, `smoke_gunicorn.sh` **25/25**.
+    `tools/make_fixture.py`에 `build_dcm4()`(4반복·Day2 밀림·중복값 포함) 추가 — 이 버그의 회귀 fixture.
 
 ## 10. 다음 작업 계획 (2026-07-26 사용자 확정 · 우선순위 순)
 

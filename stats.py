@@ -215,32 +215,47 @@ def drop_pattern(store):
     특정 index가 유독 자주 제외되면 측정 순서·장비 안정화 등 **계통 오류**를 의심할 근거가 된다.
     (채택 로직 자체는 바꾸지 않는다 — 진단 정보일 뿐)
     """
-    counts = {1: 0, 2: 0, 3: 0}
+    MAXR = 4          # DCM 2026.7부터 CS 검체가 4반복 → R4까지 집계
+    IDX = list(range(1, MAXR + 1))
+
+    def _drops(smp):
+        """drop은 UC=정수(3중 1개 제외), DCM=리스트(4중 2개 제외). 구 데이터 호환을 위해 양쪽 처리."""
+        d = smp.get('drop')
+        if isinstance(d, (list, tuple)):
+            return [x for x in d if x in IDX]
+        return [d] if d in IDX else []
+
+    counts = {k: 0 for k in IDX}
     total = 0
     per_round = {}
+    n_rep_seen = set()
     for label in sorted(store, key=rounds._key):
         r = store[label]
-        local = {1: 0, 2: 0, 3: 0}
+        local = {k: 0 for k in IDX}
         for mode in ('uc', 'dcm'):
             s = r.get(mode)
             if not s:
                 continue
             for smp in s.get('samples', []):
-                d = smp.get('drop')
-                if d in (1, 2, 3):
+                n_rep_seen.add(smp.get('n_reps') or len(smp.get('reps') or []) or 3)
+                for d in _drops(smp):
                     counts[d] += 1
                     local[d] += 1
                     total += 1
         if sum(local.values()):
             per_round[label] = {'R%d' % k: v for k, v in local.items()}
-    expected = total / 3.0 if total else 0
+    # 균등 기대치는 **실제 반복 개수**로 나눈다(3반복이면 1/3, 4반복이면 1/4).
+    nrep = max(n_rep_seen) if n_rep_seen else 3
+    used = [k for k in IDX if k <= nrep]
+    expected = total / float(len(used)) if (total and used) else 0
     skew = None
-    if total >= 9:  # 표본이 너무 적으면 판단하지 않음
-        skew = max(abs(counts[k] - expected) for k in counts) / expected if expected else None
+    if total >= 3 * len(used):  # 표본이 너무 적으면 판단하지 않음
+        skew = max(abs(counts[k] - expected) for k in used) / expected if expected else None
     return {
         'total': total,
-        'counts': {'R%d' % k: v for k, v in counts.items()},
-        'per_round': per_round,
+        'n_reps': nrep,
+        'counts': {'R%d' % k: counts[k] for k in used},
+        'per_round': {l: {'R%d' % k: v['R%d' % k] for k in used} for l, v in per_round.items()},
         'expected_each': _r(expected, 2),
         'max_rel_dev': _r(skew),
         'flag': bool(skew is not None and skew > 0.5),

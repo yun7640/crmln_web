@@ -383,6 +383,23 @@ def main():
     # 서버 계산값이 검증용으로 기록되어 있어야 한다
     srv_cells = [sel.cell(15 + (sr - 5), 2 + 16).value for sr in (9, 10, 11, 12)]
     check('서버 계산값이 검증 열에 기록됨', all(isinstance(v, (int, float)) for v in srv_cells), srv_cells)
+    # ★ 조건부 서식 색상 회귀 방지 — dxf는 fgColor가 아니라 bgColor로 렌더된다.
+    #   fgColor만 넣으면 Excel에서 채택 셀 노란색이 아예 보이지 않는다(실제 발생).
+    #   6자리 RGB를 주면 알파가 00(투명)으로 저장되므로 8자리 ARGB여야 한다.
+    import zipfile as _zip, re as _re  # noqa: E402
+    _sx = _zip.ZipFile(io.BytesIO(dcm_out)).read('xl/styles.xml').decode('utf-8')
+    _dx = _re.search(r'<dxfs.*?</dxfs>', _sx, _re.S)
+    _fills = _re.findall(r'<patternFill[^>]*>(.*?)</patternFill>', _dx.group(0) if _dx else '', _re.S)
+    check('조건부 서식 채우기가 하나 이상', len(_fills) >= 3, len(_fills))
+    check('dxf 채우기가 bgColor를 사용(fgColor 단독 금지)',
+          all('bgColor' in f for f in _fills), _fills[:2])
+    check('dxf 색상이 8자리 ARGB(알파 FF)',
+          all(_re.search(r'bgColor rgb="FF[0-9A-Fa-f]{6}"', f) for f in _fills), _fills[:2])
+    check('채택 셀 노란색(FFF2A8)이 등록됨',
+          any('FFFFF2A8' in f for f in _fills), _fills)
+    check('제외 셀 회색(F2F2F2)이 등록됨', any('FFF2F2F2' in f for f in _fills), _fills)
+    check('제외 셀에 취소선', 'strike' in (_dx.group(0) if _dx else ''))
+
     gd = dwb[RE.DCM_GUIDE]
     gtxt = ' '.join(str(c.value) for r in gd.iter_rows() for c in r if c.value)
     check('가이드에 판정 기준(±1 mg/dL) 명시', '±1 mg/dL' in gtxt)

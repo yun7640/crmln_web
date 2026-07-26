@@ -184,6 +184,10 @@ HANDOVER_인수인계.md        (이 문서)
 
 - Flask `app.test_client()`로 기능 스모크(백그라운드 서버는 이 샌드박스에서 불안정했음).
 - 헤더/응답은 **실제 gunicorn**으로도 확인(한글 헤더 버그 재발 방지).
+- **★ 조건부 서식 색상은 렌더링해서 눈으로 확인할 것.** dxf는 `bgColor`로 렌더되므로 `fgColor`만 넣으면
+  파일은 정상이지만 색이 안 보인다. PDF→PNG로 뽑아 확인하면 확실하다:
+  `soffice --headless --convert-to pdf ...` → `pdftoppm -png -r 130 x.pdf out` → 색상 픽셀 카운트/육안 확인.
+  (숨김 시트로 만들어도 LibreOffice는 PDF에 포함하므로 페이지 번호로 찾을 것. 참조 시트를 **삭제하면 `#NAME?`** 이 된다)
 - **★ 엑셀 수식 시트는 반드시 실제 재계산해서 검증할 것.** openpyxl은 수식을 계산하지 않으므로
   수식이 틀려도 파일은 정상으로 보인다. LibreOffice headless로 변환하면 계산된 값을 읽을 수 있다:
   `soffice --headless --norestore -env:UserInstallation=file:///tmp/lo --convert-to xlsx --outdir OUT IN.xlsx`
@@ -319,6 +323,20 @@ HANDOVER_인수인계.md        (이 문서)
     판정 단위는 TC=±1%, HDL Control=±1 mg/dL로 행마다 다르게 적용한다.
   · `dashboard_payload`에 `dcm_qc_seed`·`dcm_qc_upload_only`를 분리 제공 — 업로드가 시드를 덮어쓰지 않는다(§0).
   · 검증: `smoke_headers.py` **152/152**, `smoke_gunicorn.sh` **25/25**.
+
+- **v16 (2026-07-26): DCM [결과선택] 시트 채택 셀 노란색 표시 수정.** ★ 재발 주의
+  · 증상: 채택 replicate가 굵게만 나오고 **노란색 배경이 전혀 보이지 않음**(UC 시트와 다름).
+  · 원인: **조건부 서식(dxf)은 `fgColor`가 아니라 `bgColor`로 배경을 렌더링한다.**
+    `PatternFill('solid', fgColor='FFF2A8')`로 쓰면 openpyxl이 `<patternFill><fgColor rgb="00FFF2A8"/></patternFill>`만
+    기록해 Excel에서 **색이 안 보인다**. 게다가 6자리 RGB를 주면 알파가 `00`(완전 투명)으로 저장된다.
+    UC 템플릿은 `<fgColor indexed="64"/><bgColor rgb="FFFFF2CC"/>` 형태다.
+  · 조치: `_dxf_fill()` / `_dxf_font()` 헬퍼를 만들어 **bgColor + 8자리 ARGB**로 통일.
+    채택 셀·채택 평균(mean) = 노란색, 제외 셀 = 회색+취소선, 검증 불일치 = 빨강.
+  · **일반 셀 스타일은 fgColor가 정상 동작**하므로 헷갈리기 쉽다 — 조건부 서식에만 해당한다.
+  · 회귀 방지: 스모크에서 `xl/styles.xml`의 dxf를 직접 파싱해 bgColor 사용·ARGB 8자리·노란색/회색 등록·취소선을 검사.
+  · 검증: LibreOffice로 PDF 렌더 → PNG 변환 후 **노란색 픽셀 존재를 실제로 확인**(육안 + 픽셀 카운트).
+    부수 수정: 옵션 설명 행 높이(6·7행), '구분'·'검체' 열 너비(라벨 잘림 해소).
+  · 검증: `smoke_headers.py` **158/158**, `smoke_gunicorn.sh` **25/25**.
 
 ## 10. 다음 작업 계획 (2026-07-26 사용자 확정 · 우선순위 순)
 

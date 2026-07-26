@@ -9,6 +9,23 @@ from openpyxl.utils import get_column_letter
 from openpyxl.cell.cell import MergedCell
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.formatting.rule import FormulaRule
+from openpyxl.styles.colors import Color
+
+
+def _dxf_fill(rgb):
+    """조건부 서식(differential format)용 채우기.
+
+    ★ 일반 셀과 달리 **조건부 서식은 fgColor가 아니라 bgColor를 배경으로 렌더링**한다.
+      `PatternFill('solid', fgColor='FFF2A8')`처럼 쓰면 openpyxl이 bgColor 없이 저장해
+      Excel에서 **색이 아예 보이지 않는다**(채택 셀 노란색이 안 나온 원인).
+      또 6자리 RGB를 주면 알파가 00(완전 투명)으로 기록되므로 8자리 ARGB로 넣는다."""
+    argb = rgb if len(rgb) == 8 else 'FF' + rgb
+    return PatternFill(patternType='solid', fgColor=Color(indexed=64), bgColor=argb)
+
+
+def _dxf_font(rgb, **kw):
+    """조건부 서식용 글꼴 — 색상은 8자리 ARGB로 지정(알파 00 방지)."""
+    return Font(name='맑은 고딕', color=(rgb if len(rgb) == 8 else 'FF' + rgb), **kw)
 
 MEMBER = {'TC': ('±1%', 'pct', 1.0), 'BF': ('±2%', 'pct', 2.0),
           'HDL': ('±1 mg/dL', 'mgdl', 1.0), 'LDL': ('±2%', 'pct', 2.0)}
@@ -574,11 +591,13 @@ def _build_dcm_select(wb, ms, qc, rows, ms_title='결과정리'):
     M(6, B0 + 1, B0 + NCOL - 1,
       'CS 검체는 측정지에 채워진 반복 수(3 또는 4)를 그대로 사용하며, n−2개를 제외하고 2개를 채택합니다. '
       'QC·Control은 제출 대상이 아니므로 선택하지 않고 전체 반복 평균을 씁니다.', size=9, color='555555', wrap=True)
+    ws.row_dimensions[6].height = 28
 
     C(7, B0, '참고', bold=True, size=9.5, fill='E8EEF5', border=True)
     M(7, B0 + 1, B0 + NCOL - 1,
       '옵션을 바꾸면 아래 표의 채택 셀(노란색)·제외 셀(회색)·평균·CV·요약이 즉시 재계산됩니다. '
       '측정값을 바꿔도 [%s] 시트를 참조하므로 자동 반영됩니다.' % ms_title, size=9, color='555555', wrap=True)
+    ws.row_dimensions[7].height = 28
 
     C(8, B0, '적용 로직', bold=True, size=9.5, fill='E8EEF5', border=True)
     C(8, B0 + 1, '=' + ''.join('IF(%s=%s$%d,"%s",' % (OPT, '$' + L(OPT_C), 4 + i, code)
@@ -850,37 +869,41 @@ def _dcm_sel_format(ws, B0, OFF, NCOL, R0, NROWS, SR0, H1, H2, HW, OPT_C, L):
             L(b + 3), r1, d1, L(b + 3), r1, d2)
         keep = base + ',COLUMN()-COLUMN($%s%d)+1<>%s,COLUMN()-COLUMN($%s%d)+1<>%s)' % (
             L(b + 3), r1, d1, L(b + 3), r1, d2)
+        # 제외 replicate: 회색 + 취소선 (stopIfTrue → 아래 채택 규칙이 덮어쓰지 않게)
         ws.conditional_formatting.add(rep, FormulaRule(
-            formula=[drop], fill=PatternFill('solid', fgColor=GRY),
-            font=Font(name='맑은 고딕', size=9, color='999999', strike=True), stopIfTrue=True))
+            formula=[drop], fill=_dxf_fill(GRY),
+            font=_dxf_font('999999', size=9, strike=True), stopIfTrue=True))
+        # 채택 replicate: 노란색 (UC [결과선택] 시트와 동일한 표시 방식)
         ws.conditional_formatting.add(rep, FormulaRule(
-            formula=[keep], fill=PatternFill('solid', fgColor=YEL),
-            font=Font(name='맑은 고딕', size=9, bold=True, color='222222')))
+            formula=[keep], fill=_dxf_fill(YEL),
+            font=_dxf_font('222222', size=9, bold=True)))
+        # 채택 2반복 평균(제출값)도 같은 노란색 계열로 강조
+        selc = '%s%d:%s%d' % (L(b + 7), r1, L(b + 7), r2)
+        ws.conditional_formatting.add(selc, FormulaRule(
+            formula=['AND(%s%d<>"",OR($%s%d>0,$%s%d>0))' % (L(b + 7), r1, L(hb + 9), r1, L(hb + 10), r1)],
+            fill=_dxf_fill(YEL), font=_dxf_font('1B7F4B', size=9.5, bold=True)))
         # 검증 열
         ver = '%s%d:%s%d' % (L(b + 17), r1, L(b + 17), r2)
         ws.conditional_formatting.add(ver, FormulaRule(
             formula=['ISNUMBER(SEARCH("불일치",%s%d))' % (L(b + 17), r1)],
-            fill=PatternFill('solid', fgColor='F8D7DA'),
-            font=Font(name='맑은 고딕', size=9, bold=True, color=RED2)))
+            fill=_dxf_fill('F8D7DA'), font=_dxf_font(RED2, size=9, bold=True), stopIfTrue=True))
         ws.conditional_formatting.add(ver, FormulaRule(
             formula=['ISNUMBER(SEARCH("일치",%s%d))' % (L(b + 17), r1)],
-            font=Font(name='맑은 고딕', size=9, color='1B7F4B')))
+            font=_dxf_font('1B7F4B', size=9, bold=True)))
         # bias 한계 초과 — TC는 bias(%) ±1%, HDL Control은 bias(mg/dL) ±1 mg/dL
         for rr in tc_rows:
             cell = '%s%d' % (L(b + 10), rr)
             ws.conditional_formatting.add('%s:%s' % (cell, cell), FormulaRule(
                 formula=['AND(%s<>"",ABS(%s)>%g)' % (cell, cell, MEMBER['TC'][2])],
-                fill=PatternFill('solid', fgColor='F8D7DA'),
-                font=Font(name='맑은 고딕', size=9, bold=True, color=RED2)))
+                fill=_dxf_fill('F8D7DA'), font=_dxf_font(RED2, size=9, bold=True)))
         for rr in hdl_rows:
             cell = '%s%d' % (L(b + 11), rr)
             ws.conditional_formatting.add('%s:%s' % (cell, cell), FormulaRule(
                 formula=['AND(%s<>"",ABS(%s)>%g)' % (cell, cell, DCM_HDL_LIM)],
-                fill=PatternFill('solid', fgColor='F8D7DA'),
-                font=Font(name='맑은 고딕', size=9, bold=True, color=RED2)))
-        # 열 너비
-        ws.column_dimensions[L(b)].width = 15
-        ws.column_dimensions[L(b + 1)].width = 14
+                fill=_dxf_fill('F8D7DA'), font=_dxf_font(RED2, size=9, bold=True)))
+        # 열 너비 — 구분/검체는 'HDL Control x1.09' 같은 라벨이 잘리지 않게 넉넉히
+        ws.column_dimensions[L(b)].width = 19
+        ws.column_dimensions[L(b + 1)].width = 15
         for k in range(2, NCOL):
             ws.column_dimensions[L(b + k)].width = 10
         ws.column_dimensions[L(b + 13)].width = 12

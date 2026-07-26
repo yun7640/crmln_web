@@ -172,6 +172,9 @@ HANDOVER_인수인계.md        (이 문서)
 - **v10 (2026-07-26): T0 + T4 완료.** `.gitignore`·`HANDOVER` 커밋(`17b6602`), `tools/` 스모크 검증 세트 추가(66검사 통과).
   검증 중 확인된 사실: `/review`·`/rounds/add` 모두 헤더 latin-1 안전, canon_label 정상,
   ⑥탭 Chart.js 4개 캔버스 정상 렌더, 콘솔 에러 없음. **현재 코드에서 재발 버그 없음.**
+  origin/main `a2d2ee8`에 반영 확인, Railway 배포 정상(`/healthz` → `{"ok":true}`).
+- **v10.1 (2026-07-26): T3 완료.** Drive `crmln-app` 사본 전수 대조 후 폐기 결정(고유 파일 0개).
+  경고 파일 배치, §12 폴더표 정리. 폴더 실제 삭제는 사용자 조치 대기.
 
 ## 10. 다음 작업 계획 (2026-07-26 사용자 확정 · 우선순위 순)
 
@@ -188,9 +191,12 @@ HANDOVER_인수인계.md        (이 문서)
 - **T2. `app_rounds.data`(JSONB) 통계 분석** — Postgres `app_rounds.data` 기반 추가 통계.
   후보 지표: 회차간 bias 추이(NIST/BF/HDL/LDL), 반복측정 CV·재현성, QC bias와 평가결과 상관, 판정 마진 분포.
   · 읽기 전용 SQL(집계)만 사용, 화면은 ⑥ 탭 하위 섹션 또는 `/rounds/stats` 신설 검토.
-- **T3. Drive `crmln-app` 사본 최신화** — Google Drive `…\CRMLN\crmln-app` 은 **v8 시점 스냅샷**(`rounds.py`에 `canon_label` 없음,
-  `app.py`에 `is_admin` 주입·`ajax` 분기 없음, `private/dashboard.html` 구버전). GitHub main(v9)으로 동기화하거나,
-  혼동 방지를 위해 사본을 폐기하고 리포 단일 원본만 유지할지 결정할 것. (§12 참조)
+- ~~**T3. Drive `crmln-app` 사본 정리**~~ — **폐기 결정(2026-07-26).**
+  22개 파일을 GitHub main과 전수 대조: **19개 동일, 3개 구버전(`app.py`·`rounds.py`·`private/dashboard.html`),
+  이 폴더에만 있는 파일 0개**(`static/`은 빈 폴더). 즉 잃을 내용이 없음.
+  폴더 안에 `⚠️_이_폴더는_폐기대상입니다.md` 경고 파일을 넣어둠.
+  · **남은 조치: 사용자가 탐색기에서 `G:\내 드라이브\00_study\표준화과제\CRMLN\crmln-app` 폴더 삭제.**
+    (Claude는 사용자 PC 파일을 삭제할 수 없음)
 - ~~**T4. 검증 스모크 정비**~~ — **완료(2026-07-26).** `tools/` 4개 스크립트 + README 추가, 총 **66개 검사 전부 통과**.
   · `tools/smoke_headers.py` (41) — 헤더 latin-1 안전성을 **직접 인코딩해 검사**하므로 Windows/개발서버에서도 동일 버그를 잡음.
     부가로 canon_label 6종, 중복 회차 병합, `/rounds/data`의 `is_admin`, 삭제 ajax, 잘못된 입력 400까지 검증.
@@ -235,6 +241,7 @@ HANDOVER_인수인계.md        (이 문서)
 |---|---|---|
 | **정본(source of truth)** | GitHub `yun7640/crmln_web` main | 배포 원본. Railway가 여기서 빌드 |
 | **로컬 clone** | `C:\Users\yun76\Documents\GitHub\crmln_web` | 실제 git 저장소. **작업은 여기서** |
-| 참고 사본 | `G:\내 드라이브\00_study\표준화과제\CRMLN\crmln-app` | git 아님. **v8 시점 스냅샷(구버전)** — 코드 기준으로 삼지 말 것 |
+| ~~참고 사본~~ | ~~`G:\내 드라이브\00_study\표준화과제\CRMLN\crmln-app`~~ | **폐기 대상(T3).** git 아님, v8 스냅샷. 전수 대조 결과 고유 파일 0개 → 삭제해도 무방 |
 
 `G:\…\CRMLN\` 루트에는 이 `HANDOVER_인수인계.md`와 `회차누적분석_미리보기.html`(정적 미리보기)도 있습니다.
+`crmln-app` 폴더를 삭제하고 나면 **정본은 GitHub 리포, 작업은 로컬 clone** — 두 곳으로 단순해집니다.

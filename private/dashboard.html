@@ -123,7 +123,7 @@ td .st,.st{display:inline-flex;align-items:center;gap:4px;font-weight:700;font-s
   </div>
 </header>
 <div class="tabs" id="tabs">
-  <button data-tab="t1" class="active">① 2026.7 측정결과 검토</button>
+  <button data-tab="t1" class="active">① HDL-C UC 측정결과 검토</button>
   <button data-tab="t2">② 평가보고서 경향분석</button>
   <button data-tab="t3">③ QC–평가 관련성</button>
   <button data-tab="t4">④ HDL-C DCM</button>
@@ -157,6 +157,10 @@ td .st,.st{display:inline-flex;align-items:center;gap:4px;font-weight:700;font-s
   #t6 .cum-kchip{display:inline-block;font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--border);margin:1px}
   #t6 .cum-kchip.g{background:#eaf5ee;border-color:#bfe0cb;color:#1B7F4B}
   #t6 .cum-kchip.r{background:#fbecea;border-color:#e6b5ac;color:#C0392B}
+  #t6 .cum-del{padding:3px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink);font-size:11px;cursor:pointer;font-family:inherit;margin:1px}
+  #t6 .cum-del:hover{background:color-mix(in srgb,var(--s1) 12%,var(--surface))}
+  #t6 .cum-del.danger{background:#C0392B;color:#fff;border-color:#C0392B}
+  #t6 .cum-del.danger:hover{background:#a5311f}
   :root[data-theme="dark"] #t6 .cum-kchip.g{background:#12301f}
   :root[data-theme="dark"] #t6 .cum-kchip.r{background:#331413}
 </style>
@@ -186,6 +190,8 @@ td .st,.st{display:inline-flex;align-items:center;gap:4px;font-weight:700;font-s
     <div><p class="panel-sub" style="font-weight:700">PS 평가 bias</p><div class="cum-chartbox"><canvas id="cum_ps"></canvas></div></div>
     <div><p class="panel-sub" style="font-weight:700">HDLC-DCM bias (mg/dL, ±1.0)</p><div class="cum-chartbox"><canvas id="cum_dcm"></canvas></div></div>
   </div>
+
+  <div id="cumManage"></div>
 
   <p class="panel-title" style="margin-top:16px">회차별 CRMLN 제출 결과 (선택 2/3)</p>
   <div id="cumTabs" style="margin-bottom:8px"></div>
@@ -681,6 +687,7 @@ buildHero();buildQCTable();buildPrecTable();buildEvalTable();renderAll();
       lineDS('업로드 HDL Control bias',COL.BF,surv,dcmUp,{borderDash:[2,2]}),
       limDS('+1.0',1,'#c0392b',surv),limDS('-1.0',-1,'#c0392b',surv)]},options:baseOpt()});
 
+    renderManage(DATA);
     var labels=DATA.round_labels||[],tabs=document.getElementById('cumTabs'),body=document.getElementById('cumBody');
     tabs.innerHTML='';
     function show(lab){[].forEach.call(tabs.children,function(x){x.classList.toggle('on',x.dataset.l===lab);});
@@ -688,6 +695,31 @@ buildHero();buildQCTable();buildPrecTable();buildEvalTable();renderAll();
       body.innerHTML='<p class="panel-sub">회차 <b>'+esc(lab)+'</b>'+(r.date?(' · '+esc(r.date)):'')+' · 정밀도 기반 median 이상치 제외(취소선), 나머지 2개 채택. QC/Control 미제출.</p>'+ucTable(r.uc)+dcmTable(r.dcm);}
     if(labels.length){labels.forEach(function(l){var b=document.createElement('span');b.className='cum-subtab';b.dataset.l=l;b.textContent=l;b.onclick=function(){show(l);};tabs.appendChild(b);});show(labels[labels.length-1]);}
     else{body.innerHTML='<p class="panel-sub">저장된 업로드 회차가 없습니다. 위에서 측정 파일을 추가하세요.</p>';}
+  }
+
+  function del(label,mode){
+    var lbl=(mode?('['+mode.toUpperCase()+'] '):'')+label;
+    if(!confirm(lbl+' 회차를 삭제할까요? (서버에서 즉시 삭제)'))return;
+    var fd=new FormData();fd.append('label',label);if(mode)fd.append('mode',mode);fd.append('ajax','1');
+    fetch('/rounds/delete',{method:'POST',body:fd,credentials:'same-origin'}).then(function(r){
+      if(r.status===403){alert('삭제는 관리자만 가능합니다.');return;}
+      return r.json().then(function(j){if(j&&j.ok){load();}else{alert((j&&j.message)||'삭제 실패');}});
+    }).catch(function(){alert('삭제 요청 실패(네트워크).');});
+  }
+  function renderManage(DATA){
+    var el=document.getElementById('cumManage');if(!el)return;
+    var labs=DATA.round_labels||[];
+    if(!DATA.is_admin||!labs.length){el.innerHTML='';return;}
+    var h='<p class="panel-title" style="margin-top:16px">저장된 회차 관리 · 중복 정리 (관리자)</p>'
+      +'<p class="cum-legend">중복·오타 라벨은 여기서 삭제하세요(서버 Postgres 즉시 반영). 새 업로드부터는 라벨이 반기 표준(예: 2026.7)으로 자동 정규화됩니다.</p>'
+      +'<table class="cum-sub" style="max-width:560px"><thead><tr><th>회차 라벨</th><th>UC</th><th>DCM</th><th>삭제</th></tr></thead><tbody>';
+    labs.forEach(function(l){var r=(DATA.uploaded||{})[l]||{};var e=encodeURIComponent(l);
+      h+='<tr><td>'+esc(l)+'</td><td>'+(r.uc?'✓':'—')+'</td><td>'+(r.dcm?'✓':'—')+'</td><td>';
+      if(r.uc)h+='<button class="cum-del" data-l="'+e+'" data-m="uc">UC</button>';
+      if(r.dcm)h+='<button class="cum-del" data-l="'+e+'" data-m="dcm">DCM</button>';
+      h+='<button class="cum-del danger" data-l="'+e+'" data-m="">전체</button></td></tr>';});
+    h+='</tbody></table>';el.innerHTML=h;
+    [].forEach.call(el.querySelectorAll('.cum-del'),function(b){b.onclick=function(){del(decodeURIComponent(b.dataset.l),b.dataset.m||null);};});
   }
 
   function load(){return fetch('/rounds/data',{credentials:'same-origin'}).then(function(r){return r.json();}).then(render)

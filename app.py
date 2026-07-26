@@ -112,7 +112,9 @@ def rounds_home():
 @app.route('/rounds/data')
 @login_required
 def rounds_data():
-    return app.response_class(json.dumps(rounds.dashboard_payload(), ensure_ascii=False),
+    p = rounds.dashboard_payload()
+    p['is_admin'] = bool(auth.is_admin(session.get('user', '')))
+    return app.response_class(json.dumps(p, ensure_ascii=False),
                               mimetype='application/json')
 
 
@@ -161,6 +163,8 @@ def rounds_add():
 @admin_required
 def rounds_delete():
     ok, msg = rounds.delete_round(request.form.get('label'), request.form.get('mode') or None)
+    if request.form.get('ajax'):
+        return {'ok': bool(ok), 'message': msg}, (200 if ok else 500)
     flash(msg)
     return redirect(url_for('rounds_home'))
 

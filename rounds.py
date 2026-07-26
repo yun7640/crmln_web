@@ -23,6 +23,19 @@ def _key(label):
         return (9999, 9)
 
 
+def canon_label(label):
+    """회차 라벨을 반기 표준(YYYY.1=상반기, YYYY.7=하반기)으로 정규화.
+    예: '2026-07','2026.07','2026-07-01','2026.7' → '2026.7'; '2026-01' → '2026.1'.
+    형식을 알 수 없으면 공백만 정리해 원문 유지."""
+    import re
+    s = str(label or '').strip()
+    m = re.match(r'^(\d{4})\s*[.\-/]\s*(\d{1,2})', s)
+    if not m:
+        return s
+    y = int(m.group(1)); mth = int(m.group(2))
+    return '%d.%d' % (y, 7 if mth >= 7 else 1)
+
+
 def load_seed():
     try:
         with open(SEED_FILE, encoding='utf-8') as f:
@@ -79,7 +92,7 @@ def _save(store):
 
 def add_round(label, summary, user='', date=''):
     """회차 라벨에 업로드 요약(mode=uc/dcm)을 병합 저장."""
-    label = (label or '').strip()
+    label = canon_label(label)
     if not label:
         return False, '회차 라벨(예: 2026.7)을 입력하세요.'
     if not isinstance(summary, dict) or summary.get('mode') not in ('uc', 'dcm'):

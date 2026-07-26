@@ -13,6 +13,7 @@
 주의: 이 스크립트가 쓰는 측정 파일은 tools/make_fixture.py가 만든 **합성 데이터**이며
       실제 CRMLN 측정결과가 아니다. 판정·제출에 사용하지 말 것.
 """
+import io
 import json
 import os
 import shutil
@@ -357,6 +358,37 @@ def main():
           len(cs04) == 2 and all(x['cv'] > 0 for x in cs04),
           [(x['day'], x['reps'], x['keep'], x['cv']) for x in cs04])
     c.post('/rounds/delete', data={'label': '2027.1', 'ajax': '1'})
+
+    # (5c) DCM 검토파일도 UC와 동일하게 [검토_가이드]·[결과선택] 시트를 포함해야 한다
+    import openpyxl as _ox2  # noqa: E402
+    with open(dcm_path, 'rb') as f:
+        dcm_out, _dmeta = RE.process(f.read())
+    dwb = _ox2.load_workbook(io.BytesIO(dcm_out))
+    check('DCM 검토파일에 검토_가이드 시트', RE.DCM_GUIDE in dwb.sheetnames, dwb.sheetnames)
+    check('DCM 검토파일에 결과선택 시트', RE.DCM_SEL_SHEET in dwb.sheetnames, dwb.sheetnames)
+    check('DCM 검토파일에 검토 시트', RE.DCM_SHEET in dwb.sheetnames, dwb.sheetnames)
+    sel = dwb[RE.DCM_SEL_SHEET]
+    check('선택 시트 C4에 옵션 드롭다운',
+          any(str(d.sqref) == 'C4' and d.type == 'list' for d in sel.data_validations.dataValidation),
+          [(str(d.sqref), d.type) for d in sel.data_validations.dataValidation])
+    check('기본 옵션이 정밀도 기준', sel['C4'].value == RE.DCM_DEFAULT_OPTION, sel['C4'].value)
+    check('선택 시트가 측정 시트를 수식으로 참조',
+          isinstance(sel['E15'].value, str) and sel['E15'].value.startswith('=IF('), sel['E15'].value)
+    check('조건부 서식(채택/제외/검증) 등록', len(list(sel.conditional_formatting)) >= 4,
+          len(list(sel.conditional_formatting)))
+    # 헬퍼 열이 겹치면 Day1의 '기본 drop2'가 Day2의 n 수식에 덮여 조용히 오답이 된다(실제 발생)
+    _h1, _h2, _hw, _oc = RE.H_DCM_SEL
+    check('Day1·Day2 헬퍼 열이 겹치지 않음', _h1 + _hw <= _h2, RE.H_DCM_SEL)
+    check('헬퍼가 옵션 목록 열을 침범하지 않음', _h2 + _hw <= _oc, RE.H_DCM_SEL)
+    # 서버 계산값이 검증용으로 기록되어 있어야 한다
+    srv_cells = [sel.cell(15 + (sr - 5), 2 + 16).value for sr in (9, 10, 11, 12)]
+    check('서버 계산값이 검증 열에 기록됨', all(isinstance(v, (int, float)) for v in srv_cells), srv_cells)
+    gd = dwb[RE.DCM_GUIDE]
+    gtxt = ' '.join(str(c.value) for r in gd.iter_rows() for c in r if c.value)
+    check('가이드에 판정 기준(±1 mg/dL) 명시', '±1 mg/dL' in gtxt)
+    check('가이드에 동점 처리 설명', '동점' in gtxt and '중앙' in gtxt)
+    check('가이드에 유리한 선택 지양 원칙', '유리하게 만들기 위한 선택은 지양' in gtxt)
+    check('가이드에 검증 열 안내', '불일치' in gtxt)
 
     # (6) drop 리스트를 stats가 집계할 수 있어야 한다(구 정수 형식도 호환)
     import stats as _S2  # noqa: E402

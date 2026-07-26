@@ -482,6 +482,11 @@ DCM_OPTIONS = [
     ('수동 지정 (부록 ③ 표)', 'MAN'),
 ]
 DCM_DEFAULT_OPTION = DCM_OPTIONS[0][0]
+# (Day1 헬퍼 시작 열, Day2 헬퍼 시작 열, Day당 헬퍼 폭, 옵션 목록 열)
+# 헬퍼는 Day당 15열(n, rank×4, idxOfRank×4, drop×2, 기본drop×2, 수동×2)을 쓴다.
+# ★ 두 블록이 겹치면 Day2의 n 수식이 Day1의 '기본 drop2'를 덮어써 **조용히 오답**이 된다(실제로 겪음).
+#   H1+HW <= H2, H2+HW <= OPT_C 를 반드시 지킬 것(tools/smoke_headers.py에서 검사).
+H_DCM_SEL = (44, 60, 15, 90)
 
 
 def _build_dcm_select(wb, ms, qc, rows, ms_title='결과정리'):
@@ -531,10 +536,7 @@ def _build_dcm_select(wb, ms, qc, rows, ms_title='결과정리'):
     SR0, R0 = 5, 15             # 측정지 5행 ↔ 시트 15행
     NROWS = 8                   # 측정지 5–12행
     SAMPLE_SRC = (9, 10, 11, 12)
-    OPT_C = 90                  # 옵션 목록 열
-    # 헬퍼는 Day당 15열(n, rank×4, idxOfRank×4, drop×2, 기본drop×2, 수동×2)을 쓴다.
-    # ★ 두 블록이 겹치면 Day2의 n 수식이 Day1의 '기본 drop2'를 덮어써 조용히 오답이 된다(실제로 겪음).
-    H1, H2, HW = 44, 60, 15     # Day1 / Day2 헬퍼 시작 열, 폭
+    H1, H2, HW, OPT_C = H_DCM_SEL
 
     def cols(day, base):
         return base + (0 if day == 1 else OFF)
@@ -742,13 +744,16 @@ def _dcm_sel_helpers(ws, b, hb, R0, NROWS, SR0, SAMPLE_SRC, CODE, L):
         ws.cell(r, hb + 11, score1)      # 기본 drop1 (옵션과 무관하게 항상 계산 — 비교 기준)
         ws.cell(r, hb + 12, score2)      # 기본 drop2
         b1, b2 = '$%s%d' % (L(hb + 11), r), '$%s%d' % (L(hb + 12), r)
-        # PAIR: 정렬 인접 간격이 최소인 쌍을 채택 → 나머지 제외
-        g1 = '({s2}-{s1})'.format(s1=srt[0], s2=srt[1])
-        g2 = '({s3}-{s2})'.format(s2=srt[1], s3=srt[2])
-        g3 = '({s4}-{s3})'.format(s3=srt[2], s4=srt[3])
-        pair1 = ('IF({n}=4,IF(AND({g1}<={g2},{g1}<={g3}),{i3},IF({g2}<={g3},{i1},{i1})),'
+        # PAIR: 정렬 인접 간격이 최소인 쌍을 채택 → 나머지 제외.
+        # ★ 간격 동점(중복 측정·부동소수 오차) 시 어느 쌍을 고르냐가 갈리므로 9자리로 반올림해 비교하고,
+        #   동점이면 **가장 중앙 쌍**을 택한다(대시보드 JS `dcmPick`과 반드시 동일해야 함).
+        g1 = 'ROUND({s2}-{s1},9)'.format(s1=srt[0], s2=srt[1])
+        g2 = 'ROUND({s3}-{s2},9)'.format(s2=srt[1], s3=srt[2])
+        g3 = 'ROUND({s4}-{s3},9)'.format(s3=srt[2], s4=srt[3])
+        # n=4: 중앙쌍(rank2,3) 우선 → 제외 rank1,4 / 하단쌍 → 제외 rank3,4 / 상단쌍 → 제외 rank1,2
+        pair1 = ('IF({n}=4,IF({g2}<=MIN({g1},{g3}),{i1},IF({g1}<={g3},{i3},{i1})),'
                  'IF({g1}<={g2},{i3},{i1}))').format(n=n, g1=g1, g2=g2, g3=g3, i1=ix[0], i3=ix[2])
-        pair2 = ('IF({n}=4,IF(AND({g1}<={g2},{g1}<={g3}),{i4},IF({g2}<={g3},{i4},{i2})),0)'
+        pair2 = ('IF({n}=4,IF({g2}<=MIN({g1},{g3}),{i4},IF({g1}<={g3},{i4},{i2})),0)'
                  ).format(n=n, g1=g1, g2=g2, g3=g3, i2=ix[1], i4=ix[3])
         # 방향성: 상위 2개 / 하위 2개 채택
         hi1 = 'IF({n}=4,{i1},{i1})'.format(n=n, i1=ix[0])
@@ -826,10 +831,15 @@ def _dcm_sel_manual(ws, B0, OFF, R0, SAMPLE_SRC, SR0, L, C, M, NAVY, box, H1, H2
             R += 1
 
 
-def _dcm_sel_format(ws, B0, OFF, NCOL, R0, NROWS, H1, H2, L):
-    """조건부 서식 — 채택=노란색, 제외=회색 취소선, 검증 불일치=빨강."""
+def _dcm_sel_format(ws, B0, OFF, NCOL, R0, NROWS, SR0, H1, H2, HW, OPT_C, L):
+    """조건부 서식 — 채택=노란색, 제외=회색 취소선, 검증 불일치=빨강, bias 한계 초과=빨강.
+
+    ★ 판정 단위 주의: TC(NIST·CFS)는 **±1%**, HDL Control은 **±1 mg/dL** 이다.
+      두 행에 같은 열·같은 한계를 적용하면 TC가 잘못 빨강 처리된다(측정지 TC bias는 mg/dL로 1을 쉽게 넘김)."""
     YEL, GRY, RED2 = 'FFF2A8', 'F2F2F2', 'C0392B'
     r1, r2 = R0, R0 + NROWS - 1
+    tc_rows = (R0 + (5 - SR0), R0 + (6 - SR0))      # 측정지 5·6행 = NIST·CFS (TC)
+    hdl_rows = (R0 + (7 - SR0), R0 + (8 - SR0))     # 측정지 7·8행 = HDL Control
     for day, hb in ((1, H1), (2, H2)):
         b = B0 + (0 if day == 1 else OFF)
         rep = '%s%d:%s%d' % (L(b + 3), r1, L(b + 6), r2)
@@ -855,12 +865,19 @@ def _dcm_sel_format(ws, B0, OFF, NCOL, R0, NROWS, H1, H2, L):
         ws.conditional_formatting.add(ver, FormulaRule(
             formula=['ISNUMBER(SEARCH("일치",%s%d))' % (L(b + 17), r1)],
             font=Font(name='맑은 고딕', size=9, color='1B7F4B')))
-        # bias 한계 초과(HDL ±1 mg/dL)
-        bm = '%s%d:%s%d' % (L(b + 11), r1, L(b + 11), r2)
-        ws.conditional_formatting.add(bm, FormulaRule(
-            formula=['AND(%s%d<>"",ABS(%s%d)>%g)' % (L(b + 11), r1, L(b + 11), r1, DCM_HDL_LIM)],
-            fill=PatternFill('solid', fgColor='F8D7DA'),
-            font=Font(name='맑은 고딕', size=9, bold=True, color=RED2)))
+        # bias 한계 초과 — TC는 bias(%) ±1%, HDL Control은 bias(mg/dL) ±1 mg/dL
+        for rr in tc_rows:
+            cell = '%s%d' % (L(b + 10), rr)
+            ws.conditional_formatting.add('%s:%s' % (cell, cell), FormulaRule(
+                formula=['AND(%s<>"",ABS(%s)>%g)' % (cell, cell, MEMBER['TC'][2])],
+                fill=PatternFill('solid', fgColor='F8D7DA'),
+                font=Font(name='맑은 고딕', size=9, bold=True, color=RED2)))
+        for rr in hdl_rows:
+            cell = '%s%d' % (L(b + 11), rr)
+            ws.conditional_formatting.add('%s:%s' % (cell, cell), FormulaRule(
+                formula=['AND(%s<>"",ABS(%s)>%g)' % (cell, cell, DCM_HDL_LIM)],
+                fill=PatternFill('solid', fgColor='F8D7DA'),
+                font=Font(name='맑은 고딕', size=9, bold=True, color=RED2)))
         # 열 너비
         ws.column_dimensions[L(b)].width = 15
         ws.column_dimensions[L(b + 1)].width = 14
@@ -869,9 +886,9 @@ def _dcm_sel_format(ws, B0, OFF, NCOL, R0, NROWS, H1, H2, L):
         ws.column_dimensions[L(b + 13)].width = 12
         ws.column_dimensions[L(b + 15)].width = 12
         # 헬퍼 열 숨김
-        for k in range(15):
+        for k in range(HW):
             ws.column_dimensions[L(hb + k)].hidden = True
-    ws.column_dimensions[L(70)].hidden = True
+    ws.column_dimensions[L(OPT_C)].hidden = True
     ws.sheet_view.showGridLines = False
     ws.freeze_panes = ws.cell(R0, B0)
 

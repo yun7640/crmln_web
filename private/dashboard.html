@@ -403,6 +403,17 @@ td .st,.st{display:inline-flex;align-items:center;gap:4px;font-weight:700;font-s
   <button class="tabtoggle" data-tgt="dcmTable" style="margin-top:14px">표로 보기 ▾</button>
   <div id="dcmTable" class="hidden tblwrap"></div>
 
+  <!-- ④-C DCM QC bias vs CRMLN 평가 bias 대응 -->
+  <div class="card" style="border-color:color-mix(in srgb,var(--s2) 25%,var(--border));margin-top:16px">
+    <p class="panel-title">DCM QC bias vs CRMLN 평가 bias 대응</p>
+    <p class="panel-sub">내부 <b>HDL Control QC bias</b>(실선)와 <b>CDC 평가 bias</b>(점선)를 <b>공통 y축(mg/dL)</b>에 겹쳐
+      회차별 대응을 봅니다. 두 선의 간격 = QC−평가 offset. 초록 음영·빨강 점선 = CRMLN member 판정 기준(±1.0 mg/dL).
+      DCM은 HDL-C 단일 항목이므로 UC 탭 ③의 4항목 패널과 달리 한 패널로 표시합니다.</p>
+    <div id="dcmRelChart"></div>
+    <p class="note" id="dcmRelNote"></p>
+    <div id="dcmRelTable" class="tblwrap"></div>
+  </div>
+
   <!-- ④-B CRMLN 제출 결과 선택 (HDL-C UC 탭 ③과 동일 방식) -->
   <div class="card" style="border-color:color-mix(in srgb,var(--s2) 25%,var(--border));margin-top:16px">
     <p class="panel-title">④ CRMLN 제출 결과 선택 (HDL-C DCM · R1–R4 → 2개)</p>
@@ -620,6 +631,125 @@ function dcmEvalTrend(){const surv=DATA.ps_surveys;const dc=surv.map(s=>({s,v:DA
 function dcmQCChart(){const rows=[];DATA.dcm_focus.qc.forEach(q=>['day1','day2'].forEach(dn=>{const d=q[dn];rows.push({name:q.name.replace('HDL ','')+' · '+(dn==='day1'?'D1':'D2'),val:d.bias_mgdl,pct:d.bias_pct,mean:d.mean,assigned:d.assigned});}));const lim=1.0,maxv=Math.max(lim*1.25,...rows.map(r=>Math.abs(r.val)*1.2));const W=360,rowH=30,padL=104,padR=44,padT=8,H=padT+rows.length*rowH+22,x0=padL,x1=W-padR,cx=v=>x0+((v+maxv)/(2*maxv))*(x1-x0);const svg=el('svg',{class:'chart',viewBox:`0 0 ${W} ${H}`});svg.appendChild(el('rect',{x:cx(-lim),y:padT,width:cx(lim)-cx(-lim),height:rows.length*rowH,fill:'color-mix(in srgb,var(--good) 9%,transparent)',rx:3}));[-lim,lim].forEach(L=>svg.appendChild(el('line',{x1:cx(L),y1:padT,x2:cx(L),y2:padT+rows.length*rowH,class:'limline'})));svg.appendChild(el('line',{x1:cx(0),y1:padT,x2:cx(0),y2:padT+rows.length*rowH,class:'zeroline'}));rows.forEach((r,i)=>{const y=padT+i*rowH+rowH/2,t=el('text',{x:x0-8,y:y+3,'text-anchor':'end',class:'tick'});t.textContent=r.name;svg.appendChild(t);const ok=Math.abs(r.val)<=lim,col=ok?DCM_COL:'var(--warn)';svg.appendChild(el('line',{x1:cx(0),y1:y,x2:cx(r.val),y2:y,stroke:col,'stroke-width':2.5,'stroke-linecap':'round'}));svg.appendChild(el('circle',{cx:cx(r.val),cy:y,r:5.5,fill:col,stroke:'var(--surface)','stroke-width':2}));const lb=el('text',{x:cx(r.val)+(r.val>=0?10:-10),y:y+3,'text-anchor':r.val>=0?'start':'end',class:'dlabel'});lb.textContent=(r.val>=0?'+':'')+fmt(r.val);svg.appendChild(lb);const hit=el('rect',{x:x0,y:padT+i*rowH,width:x1-x0,height:rowH,fill:'transparent',style:'cursor:pointer'});hit.addEventListener('mousemove',ev=>showTT(`<b>${r.name}</b><div class="row"><span class="k">측정평균</span><span class="v">${fmt(r.mean)} mg/dL</span></div><div class="row"><span class="k">지정값</span><span class="v">${fmt(r.assigned)} mg/dL</span></div><div class="row"><span class="k">bias</span><span class="v">${(r.val>=0?'+':'')+fmt(r.val)} mg/dL (${(r.pct>=0?'+':'')+fmt(r.pct)}%)</span></div><div class="row"><span class="k">한계</span><span class="v">±1.0 mg/dL</span></div>`,ev));hit.addEventListener('mouseleave',hideTT);svg.appendChild(hit);});const ax=el('text',{x:(x0+x1)/2,y:H-6,'text-anchor':'middle',class:'axlabel'});ax.textContent='bias (mg/dL)';svg.appendChild(ax);document.getElementById('dcmQCChart').innerHTML='';document.getElementById('dcmQCChart').appendChild(svg);}
 function dcmSampleChart(){const S=DATA.dcm_focus.samples;const W=400,rowH=32,padL=52,padR=54,padT=8,H=padT+S.length*rowH+20,maxv=Math.max(1.0,...S.map(s=>Math.abs(s.day_diff)*1.3)),x0=padL,x1=W-padR,cx=v=>x0+((v+maxv)/(2*maxv))*(x1-x0);const svg=el('svg',{class:'chart',viewBox:`0 0 ${W} ${H}`});for(let g=-1;g<=1;g++){const x=cx(g);svg.appendChild(el('line',{x1:x,y1:padT,x2:x,y2:padT+S.length*rowH,class:g===0?'zeroline':'gridline'}));const t=el('text',{x,y:H-6,'text-anchor':'middle',class:'tick'});t.textContent=(g>0?'+':'')+g;svg.appendChild(t);}S.forEach((s,i)=>{const y=padT+i*rowH+rowH/2,lb=el('text',{x:x0-10,y:y+3,'text-anchor':'end',class:'tick'});lb.textContent=s.name;svg.appendChild(lb);const barH=14,from=cx(0),to=cx(s.day_diff);svg.appendChild(el('rect',{x:Math.min(from,to),y:y-barH/2,width:Math.max(Math.abs(to-from),2),height:barH,rx:4,fill:DCM_COL,opacity:.92}));const vl=el('text',{x:to+(s.day_diff>=0?8:-8),y:y+3,'text-anchor':s.day_diff>=0?'start':'end',class:'dlabel'});vl.textContent=(s.day_diff>=0?'+':'')+fmt(s.day_diff)+' ('+(s.day_diff_pct>=0?'+':'')+fmt(s.day_diff_pct,1)+'%)';svg.appendChild(vl);const hit=el('rect',{x:0,y:padT+i*rowH,width:W,height:rowH,fill:'transparent',style:'cursor:pointer'});hit.addEventListener('mousemove',ev=>showTT(`<b>${s.name}</b><div class="row"><span class="k">Day1 평균</span><span class="v">${fmt(s.day1_mean)} (CV ${fmt(s.day1_cv)}%)</span></div><div class="row"><span class="k">Day2 평균</span><span class="v">${fmt(s.day2_mean)} (CV ${fmt(s.day2_cv)}%)</span></div><div class="row"><span class="k">Day2−Day1</span><span class="v">${(s.day_diff>=0?'+':'')+fmt(s.day_diff)} mg/dL</span></div><div class="row"><span class="k">통합 재현 CV</span><span class="v">${fmt(s.repro_cv)}%</span></div>`,ev));hit.addEventListener('mouseleave',hideTT);svg.appendChild(hit);});const ax=el('text',{x:(x0+x1)/2,y:H-6,'text-anchor':'middle',class:'axlabel'});ax.textContent='Day2 − Day1 (mg/dL)';svg.appendChild(ax);document.getElementById('dcmSampleChart').innerHTML='';document.getElementById('dcmSampleChart').appendChild(svg);}
 function buildDcmTable(){const f=DATA.dcm_focus;let h='<table><thead><tr><th>검체</th><th>Day1 평균</th><th>Day1 CV%</th><th>Day2 평균</th><th>Day2 CV%</th><th>통합 재현CV%</th><th>Day차 mg/dL</th><th>Day차 %</th></tr></thead><tbody>';f.samples.forEach(s=>{h+=`<tr><td>${s.name}</td><td>${fmt(s.day1_mean)}</td><td>${fmt(s.day1_cv)}</td><td>${fmt(s.day2_mean)}</td><td>${fmt(s.day2_cv)}</td><td>${fmt(s.repro_cv)}</td><td>${(s.day_diff>=0?'+':'')+fmt(s.day_diff)}</td><td>${(s.day_diff_pct>=0?'+':'')+fmt(s.day_diff_pct)}</td></tr>`;});h+='</tbody></table>';document.getElementById('dcmTable').innerHTML=h;}
+/* ---------- TAB4-C: DCM QC bias vs CRMLN 평가 bias 대응 ----------
+   ⚠️ 내부 DCM QC bias는 대시보드 상수에 2026.7만 있고, 과거 회차는 측정 엑셀을 업로드해야
+      /rounds/data 의 dcm_qc_upload 로 채워진다. 없는 회차는 **점을 찍지 않고 '데이터 없음'으로 표기**한다
+      (값을 추정해 채우지 않는다 — 인수인계 §0). */
+var DCM_QC_UP={};   // {회차: 내부 HDL Control bias(mg/dL)} — 서버에서 비동기로 채움
+function dcmQcSeries(){
+  var out={};
+  Object.keys(DCM_QC_UP).forEach(function(s){if(DCM_QC_UP[s]!=null)out[s]=DCM_QC_UP[s];});
+  // 2026.7 은 파일 내 상수(dcm_focus)에서 계산 — 업로드 값이 있으면 그쪽을 우선
+  if(out['2026.7']==null){
+    var v=[];(DATA.dcm_focus.qc||[]).forEach(function(q){
+      ['day1','day2'].forEach(function(dn){if(q[dn]&&q[dn].bias_mgdl!=null)v.push(q[dn].bias_mgdl);});});
+    if(v.length)out['2026.7']=v.reduce(function(a,b){return a+b;},0)/v.length;
+  }
+  return out;
+}
+function dcmRelChart(){
+  var host=document.getElementById('dcmRelChart');if(!host)return;
+  var surv=DATA.survey_order,qc=dcmQcSeries(),ev={};
+  Object.keys(DATA.dcm_eval||{}).forEach(function(s){if(DATA.dcm_eval[s].bias!=null)ev[s]=DATA.dcm_eval[s].bias;});
+  var band=1.0,vals=[band,-band];
+  surv.forEach(function(s){if(qc[s]!=null)vals.push(qc[s]);if(ev[s]!=null)vals.push(ev[s]);});
+  var mn=Math.min.apply(null,vals),mx=Math.max.apply(null,vals),pad=(mx-mn)*0.18||0.5;mn-=pad;mx+=pad;
+  var W=760,H=280,padL=52,padR=22,padT=16,padB=34,x0=padL,x1=W-padR,y0=H-padB,y1=padT;
+  var sx=function(i){return x0+i/(surv.length-1)*(x1-x0);},yy=function(v){return y1+(mx-v)/(mx-mn)*(y0-y1);};
+  var svg=el('svg',{class:'chart',viewBox:'0 0 '+W+' '+H});
+  svg.appendChild(el('rect',{x:x0,y:yy(band),width:x1-x0,height:yy(-band)-yy(band),
+    fill:'color-mix(in srgb,var(--good) 9%,transparent)',rx:3}));
+  [-band,band].forEach(function(Lm){svg.appendChild(el('line',{x1:x0,y1:yy(Lm),x2:x1,y2:yy(Lm),class:'limline'}));});
+  var lt=el('text',{x:x0+6,y:yy(band)-4,class:'tick',fill:'var(--crit)'});
+  lt.textContent='member ±1.00 mg/dL';svg.appendChild(lt);
+  svg.appendChild(el('line',{x1:x0,y1:yy(0),x2:x1,y2:yy(0),class:'zeroline'}));
+  niceTicks(mn,mx,4).forEach(function(t){
+    var tx=el('text',{x:x0-6,y:yy(t)+3,'text-anchor':'end',class:'tick'});
+    tx.textContent=(t>0?'+':'')+t.toFixed(1);svg.appendChild(tx);});
+  surv.forEach(function(s,i){var tx=el('text',{x:sx(i),y:H-10,'text-anchor':'middle',class:'tick'});
+    tx.textContent=DATA.survey_labels[s];svg.appendChild(tx);});
+  // QC−평가 offset 세로 연결선(둘 다 있는 회차만)
+  var paired=[];
+  surv.forEach(function(s,i){
+    if(qc[s]==null||ev[s]==null)return;
+    paired.push({s:s,qc:qc[s],ev:ev[s],d:qc[s]-ev[s]});
+    svg.appendChild(el('line',{x1:sx(i),y1:yy(qc[s]),x2:sx(i),y2:yy(ev[s]),
+      stroke:'var(--muted)','stroke-width':1,'stroke-dasharray':'2 2'}));
+  });
+  function series(map,col,dashed,label){
+    var seg=[],cur=[];
+    surv.forEach(function(s,i){if(map[s]==null){if(cur.length)seg.push(cur);cur=[];}else cur.push([i,map[s]]);});
+    if(cur.length)seg.push(cur);
+    seg.forEach(function(pts){
+      if(pts.length<2)return;
+      var d='';pts.forEach(function(p,k){d+=(k?'L':'M')+sx(p[0])+' '+yy(p[1])+' ';});
+      var path=el('path',{d:d,fill:'none',stroke:col,'stroke-width':2,'stroke-linejoin':'round'});
+      if(dashed)path.setAttribute('stroke-dasharray','5 3');
+      svg.appendChild(path);});
+    surv.forEach(function(s,i){
+      if(map[s]==null)return;
+      var c=el('circle',{cx:sx(i),cy:yy(map[s]),r:4.5,fill:dashed?'var(--surface)':col,
+        stroke:col,'stroke-width':2,style:'cursor:pointer'});
+      c.addEventListener('mousemove',function(evt){
+        var other=(dashed?qc[s]:ev[s]);
+        showTT('<b>'+label+' · '+DATA.survey_labels[s].replace("'","20")+'</b>'
+          +'<div class="row"><span class="k">bias</span><span class="v">'+(map[s]>=0?'+':'')+fmt(map[s])+' mg/dL</span></div>'
+          +'<div class="row"><span class="k">한계</span><span class="v">±1.00 mg/dL</span></div>'
+          +(other==null?'<div class="row"><span class="k">대응 값</span><span class="v">데이터 없음</span></div>'
+            :'<div class="row"><span class="k">QC−평가</span><span class="v">'+((qc[s]-ev[s])>=0?'+':'')+fmt(qc[s]-ev[s])+' mg/dL</span></div>'),evt);});
+      c.addEventListener('mouseleave',hideTT);svg.appendChild(c);});
+  }
+  series(ev,UC_COL,true,'CDC 평가 bias');
+  series(qc,DCM_COL,false,'내부 HDL Control QC bias');
+  host.innerHTML='';host.appendChild(svg);
+  var lg=document.createElement('div');lg.style.cssText='display:flex;gap:16px;flex-wrap:wrap;font-size:11px;margin-top:6px';
+  lg.innerHTML='<span><span class="adot" style="background:'+DCM_COL+'"></span>실선 = 내부 HDL Control QC bias</span>'
+    +'<span><span class="adot" style="background:'+UC_COL+';opacity:.6"></span>점선 = CDC 평가 bias</span>'
+    +'<span style="color:var(--crit)">┄ CRMLN member 판정 기준 ±1.0 mg/dL</span>';
+  host.appendChild(lg);
+  dcmRelSummary(surv,qc,ev,paired);
+}
+function dcmRelSummary(surv,qc,ev,paired){
+  var noQC=surv.filter(function(s){return qc[s]==null;}),noEv=surv.filter(function(s){return ev[s]==null;});
+  var r=null;
+  if(paired.length>=3){
+    var n=paired.length,mx=0,my=0;
+    paired.forEach(function(p){mx+=p.qc;my+=p.ev;});mx/=n;my/=n;
+    var sxy=0,sxx=0,syy=0;
+    paired.forEach(function(p){sxy+=(p.qc-mx)*(p.ev-my);sxx+=Math.pow(p.qc-mx,2);syy+=Math.pow(p.ev-my,2);});
+    if(sxx>0&&syy>0)r=sxy/Math.sqrt(sxx*syy);
+  }
+  var h='';
+  h+='<b>짝 데이터(내부 QC·평가 모두 있는 회차): '+paired.length+'개</b> — '
+    +(r!=null?('상관 r = '+fmt(r,2)):'<b>상관 계산 보류</b> (짝이 3개 미만이면 추세를 판단하지 않습니다)')+'. ';
+  if(noQC.length)h+='내부 DCM QC bias 없음: <b>'+noQC.map(function(s){return DATA.survey_labels[s];}).join(', ')
+    +'</b> — 해당 회차 측정 엑셀을 ⑥탭 <b>과거 회차 소급 누적</b>으로 올리면 채워집니다(참고용). ';
+  if(noEv.length)h+='CDC 평가 회신 대기: <b>'+noEv.map(function(s){return DATA.survey_labels[s];}).join(', ')+'</b>. ';
+  h+='<br>값이 없는 회차는 <b>점을 찍지 않고 선을 끊어</b> 표시합니다 — 추정값으로 채우지 않습니다. '
+    +'QC와 평가는 서로 다른 물질·시점이므로 offset이 0이 아닐 수 있으며, <b>일치 여부가 아니라 방향·크기의 일관성</b>을 봅니다. '
+    +'최종 판정은 CDC 참조법 회신 및 검토자 확인 후 확정합니다.';
+  document.getElementById('dcmRelNote').innerHTML=h;
+  var t='<table style="font-size:11px;max-width:760px"><thead><tr><th>회차</th><th>내부 QC bias</th><th>CDC 평가 bias</th>'
+    +'<th>QC−평가</th><th>QC 판정(±1)</th><th>평가 판정</th></tr></thead><tbody>';
+  surv.forEach(function(s){
+    var q=qc[s],e=ev[s],ce=(DATA.dcm_eval[s]||{});
+    t+='<tr><td>'+DATA.survey_labels[s]+'</td>'
+      +'<td style="text-align:right">'+(q==null?'<span style="color:var(--muted)">데이터 없음</span>':((q>=0?'+':'')+fmt(q)))+'</td>'
+      +'<td style="text-align:right">'+(e==null?'<span style="color:var(--muted)">평가 대기</span>':((e>=0?'+':'')+fmt(e)))+'</td>'
+      +'<td style="text-align:right">'+((q==null||e==null)?'–':(((q-e)>=0?'+':'')+fmt(q-e)))+'</td>'
+      +'<td style="text-align:center">'+(q==null?'–':(Math.abs(q)<=1.0?'<span class="st ok">✓ 적합</span>':'<span class="st fail">⚠ 초과</span>'))+'</td>'
+      +'<td style="text-align:center">'+(ce.cert===undefined?'–':(ce.cert?'<span class="st ok">✓ 인증</span>':'<span class="st fail">✗ 미인증</span>'))+'</td></tr>';
+  });
+  document.getElementById('dcmRelTable').innerHTML=t+'</tbody></table>';
+}
+function dcmRelLoad(){
+  // 업로드 누적 회차의 내부 DCM QC bias를 서버에서 받아 과거 구간을 채운다(있을 때만).
+  if(window._dcmRelFetched)return;window._dcmRelFetched=1;
+  fetch('/rounds/data',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(D){
+    if(D&&D.dcm_qc_upload){DCM_QC_UP=D.dcm_qc_upload;dcmRelChart();}
+  }).catch(function(){/* 서버 미연결(정적 열람)이면 상수만으로 표시 */});
+}
+
 /* ---------- TAB4-B: HDL-C DCM 제출 결과 선택 (R1–Rn → 2개) ---------- */
 /* 채택 규칙은 review_engine._dcm_pick 과 동일하게 유지할 것.
    기본 = median 편차가 큰 순으로 n−2개 제외. 동점이면 정렬 순위가 중앙에서 먼 쪽을 먼저 제외
@@ -630,10 +760,17 @@ function dcmPick(reps,crit){
   const n=reps.length,idx=[...Array(n).keys()];
   if(n<3)return{keep:idx,drop:[]};
   let keep;
-  if(crit==='minpair'){ // 모든 2개 조합 중 상대차가 가장 작은 쌍
-    let best=Infinity,bp=[0,1];
-    for(let i=0;i<n;i++)for(let j=i+1;j<n;j++){const d=Math.abs(reps[i]-reps[j])/((reps[i]+reps[j])/2);if(d<best){best=d;bp=[i,j];}}
-    keep=bp;
+  if(crit==='minpair'){
+    // 정렬 후 인접 간격이 가장 작은 쌍. 엑셀 [결과선택] 시트와 동일 정의여야 한다.
+    // ★ 간격이 동점이면(중복 측정·부동소수 오차) 어느 쌍을 고르느냐가 갈린다 → 9자리로 반올림해
+    //   비교하고, 동점이면 **가장 중앙 쌍**을 택한다(기본 정밀도 기준과 같은 방향 = 보수적).
+    const rnd=x=>Math.round(x*1e9)/1e9;
+    const srt=[...idx].sort((a,b)=>reps[a]-reps[b]||a-b);
+    const g=[];for(let i=0;i+1<n;i++)g.push(rnd(reps[srt[i+1]]-reps[srt[i]]));
+    let pos;
+    if(n===4)pos=(g[1]<=Math.min(g[0],g[2]))?1:((g[0]<=g[2])?0:2);
+    else pos=(g[0]<=g[1])?0:1;
+    keep=[srt[pos],srt[pos+1]].sort((a,b)=>a-b);
   }else if(crit==='hdl_high'||crit==='hdl_low'){ // 값의 크기로 채택 — 민감도 분석 전용
     const ord=[...idx].sort((a,b)=>crit==='hdl_high'?reps[b]-reps[a]:reps[a]-reps[b]);
     keep=ord.slice(0,2).sort((a,b)=>a-b);
@@ -729,7 +866,7 @@ function buildDcmSel(){
     const sc=document.getElementById('dcmSelCrit');if(sc)sc.addEventListener('change',renderDcmSel);}
   renderDcmSel();
 }
-function buildDcm(){buildDcmHero();dcmCertMatrix();dcmEvalTrend();dcmQCChart();dcmSampleChart();buildDcmTable();buildDcmSel();}
+function buildDcm(){buildDcmHero();dcmCertMatrix();dcmEvalTrend();dcmQCChart();dcmSampleChart();buildDcmTable();dcmRelChart();dcmRelLoad();buildDcmSel();}
 
 /* ---------- TAB5: BF 하부분획 ---------- */
 function buildBfHero(){const b=DATA.bf_analysis;document.getElementById('kbfval').textContent=fmt(b.k_bf_2026_7,2);document.getElementById('bfKtile').innerHTML='×'+fmt(b.k_bf_2026_7,2);const bfpools=DATA.focus_2026_7.analytes.TC;const maxcv=Math.max(...Object.values(bfpools).map(p=>p.total_cv));document.getElementById('bfCVtile').innerHTML=fmt(maxcv)+'<small>%</small>';document.getElementById('bfNote').innerHTML=`BF control·검체 정밀도 양호(반복 CV ≤${fmt(maxcv)}%), Day 재현성 정합. BF의 만성 음(−) bias가 LDL 음(−)편향을 견인 — LDL 관리의 핵심은 BF 정확도.`;}

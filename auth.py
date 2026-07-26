@@ -4,6 +4,7 @@
 최초 부팅 시 USERS_JSON 환경변수로 시드. ADMIN_USERS(콤마 목록)=관리자 지정."""
 import os, json, threading
 from werkzeug.security import generate_password_hash, check_password_hash
+import db
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 USERS_FILE = os.environ.get('USERS_FILE', os.path.join(BASE, 'data', 'users.json'))
@@ -55,12 +56,27 @@ def _write(store):
         return False
 
 
+def backend():
+    return 'postgres' if (db.configured() and db.available()) else 'file'
+
+
 def persistent():
-    """USERS_FILE 경로가 쓰기 가능한지(영구 저장 여부 안내용)."""
+    """영구 저장 여부(안내용): Postgres 연결 또는 USERS_FILE 경로."""
+    if db.configured():
+        return db.available()
     return os.path.exists(USERS_FILE) or bool(os.environ.get('USERS_FILE'))
 
 
 def load_store():
+    # Postgres 우선(연결 가능 시). 실패하면 파일로 폴백해 로그인 가용성 유지.
+    if db.configured():
+        d = db.users_load()
+        if d is not None:
+            store = _ensure_admin(_norm(d)) if d else {}
+            if not store:
+                store = _seed_from_env()
+                db.users_save(store)
+            return store
     with _lock:
         if os.path.exists(USERS_FILE):
             try:
@@ -76,6 +92,9 @@ def load_store():
 
 
 def save_store(store):
+    if db.configured():
+        if db.users_save(store):
+            return True
     with _lock:
         return _write(store)
 

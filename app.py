@@ -5,6 +5,7 @@ from flask import (Flask, request, session, redirect, url_for, render_template,
                    send_file, send_from_directory, flash)
 import auth
 import review_engine
+import rounds
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-only-change-me')
@@ -96,12 +97,98 @@ def review():
     return resp
 
 
+# ---------- 회차 누적 대시보드 ----------
+@app.route('/rounds')
+@login_required
+def rounds_home():
+    payload = rounds.dashboard_payload()
+    return render_template('cumulative.html',
+                           payload_json=json.dumps(payload, ensure_ascii=False),
+                           round_list=rounds.list_rounds(),
+                           persistent=rounds.persistent(),
+                           backend=rounds.backend())
+
+
+@app.route('/rounds/data')
+@login_required
+def rounds_data():
+    return app.response_class(json.dumps(rounds.dashboard_payload(), ensure_ascii=False),
+                              mimetype='application/json')
+
+
+@app.route('/rounds/add', methods=['POST'])
+@login_required
+def rounds_add():
+    """측정 파일 업로드 → 회차 저장(누적) + 제출 검토 파일 생성·반환(한 번에)."""
+    f = request.files.get('file')
+    label = (request.form.get('label') or '').strip()
+    if not f or not f.filename.lower().endswith(('.xlsx', '.xlsm')):
+        return {'error': '.xlsx 측정 파일을 첨부하세요.'}, 400
+    if not label:
+        return {'error': '회차 라벨(예: 2026.7)을 입력하세요.'}, 400
+    data = f.read()
+    try:
+        summary = review_engine.summarize_round(data)
+    except ValueError as e:
+        return {'error': str(e)}, 400
+    except Exception as e:
+        return {'error': '요약 중 오류: %s' % e}, 500
+    ok, msg = rounds.add_round(label, summary, user=session.get('user', ''),
+                               date=(request.form.get('date') or '').strip())
+    if not ok:
+        return {'error': msg}, 500
+    # 제출 검토 파일도 함께 생성해 반환
+    try:
+        out_bytes, rsum = review_engine.process(data)
+    except Exception:
+        # 저장은 되었으니 파일 생성 실패해도 상태는 알림
+        return {'stored': True, 'label': label, 'mode': summary['mode'],
+                'summary': summary, 'message': msg,
+                'warn': '저장은 완료. 검토 파일 생성은 건너뜀.'}
+    bio = io.BytesIO(out_bytes)
+    name = os.path.splitext(f.filename)[0] + '_검토.xlsx'
+    resp = send_file(bio, as_attachment=True, download_name=name,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    resp.headers['X-Round-Result'] = json.dumps(
+        {'stored': True, 'label': label, 'mode': summary['mode'],
+         'n_samples': summary.get('n_samples'), 'n_exceed': summary.get('n_exceed'),
+         'message': msg}, ensure_ascii=False)
+    return resp
+
+
+@app.route('/rounds/delete', methods=['POST'])
+@admin_required
+def rounds_delete():
+    ok, msg = rounds.delete_round(request.form.get('label'), request.form.get('mode') or None)
+    flash(msg)
+    return redirect(url_for('rounds_home'))
+
+
+@app.route('/rounds/export')
+@admin_required
+def rounds_export():
+    bio = io.BytesIO(rounds.export_json().encode('utf-8'))
+    return send_file(bio, as_attachment=True, download_name='crmln_rounds_backup.json',
+                     mimetype='application/json')
+
+
+@app.route('/rounds/import', methods=['POST'])
+@admin_required
+def rounds_import():
+    f = request.files.get('file')
+    raw = f.read().decode('utf-8') if f else (request.form.get('json') or '')
+    ok, msg = rounds.import_json(raw)
+    flash(msg)
+    return redirect(url_for('rounds_home'))
+
+
 # ---------- 관리자 ----------
 @app.route('/admin')
 @admin_required
 def admin_home():
     return render_template('admin.html', users=auth.list_users(),
-                           persistent=auth.persistent(), export=auth.export_users_json())
+                           persistent=auth.persistent(), export=auth.export_users_json(),
+                           backend=auth.backend())
 
 
 @app.route('/admin/add', methods=['POST'])

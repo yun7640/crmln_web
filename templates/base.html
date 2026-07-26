@@ -39,6 +39,7 @@ pre{background:#0f1b2a;color:#e6eef7;padding:12px;border-radius:8px;overflow:aut
 <header>
   <a class="home" href="{{ url_for('index') }}">CRMLN 검토 대시보드</a>
   <div class="sp"></div>
+  <a href="{{ url_for('rounds_home') }}">📈 회차 누적분석</a>
   <a href="{{ url_for('manual') }}">📘 사용자 설명서</a>
   {% if is_admin %}<a href="{{ url_for('admin_home') }}">🛠 관리자</a>{% endif %}
   <span class="who">👤 {{ user }}{% if is_admin %} · 관리자{% endif %}</span>

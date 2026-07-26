@@ -33,6 +33,7 @@ iframe{border:0;width:100%;height:100%}
 <header>
   <h1>CRMLN 측정결과 검토 · 평가경향 대시보드</h1>
   <div class="sp"></div>
+  <a class="navlink" href="{{ url_for('rounds_home') }}">📈 회차 누적분석</a>
   <a class="navlink" href="{{ url_for('manual') }}">📘 사용자 설명서</a>
   {% if is_admin %}<a class="navlink" href="{{ url_for('admin_home') }}">🛠 관리자</a>{% endif %}
   <span class="who">👤 {{ user }}{% if is_admin %} · 관리자{% endif %}</span>
@@ -75,11 +76,11 @@ go.onclick=async()=>{
     const sum=JSON.parse(r.headers.get('X-Review-Summary')||'{}');
     const blob=await r.blob();const url=URL.createObjectURL(blob);
     const a=document.createElement('a');a.href=url;a.download=(chosen.name.replace(/\.(xlsx|xlsm)$/i,''))+'_검토.xlsx';a.click();URL.revokeObjectURL(url);
-    status.innerHTML='<span class="ok">✓ 완료 · 다운로드됨</span><br>'+
-      '<span class="pill">검체 '+(sum.samples||0)+'</span>'+
-      '<span class="pill">선택셀 '+(sum.painted||0)+'</span>'+
-      '<span class="pill">QC '+(sum.qc_rows||0)+'</span>'+
-      '<span class="pill" style="color:#c0392b">member 초과 '+(sum.member_exceed||0)+'</span>';
+    let pills='<span class="pill">검체 '+(sum.samples||0)+'</span>';
+    if(sum.mode==='dcm'){pills='<span class="pill" style="color:#245d84">HDL-C DCM</span>'+pills+'<span class="pill">Day '+((sum.days||[]).join('·')||'-')+'</span>';}
+    else{pills+='<span class="pill">선택셀 '+(sum.painted||0)+'</span>';}
+    pills+='<span class="pill">QC '+(sum.qc_rows||0)+'</span><span class="pill" style="color:#c0392b">member 초과 '+(sum.member_exceed||0)+'</span>';
+    status.innerHTML='<span class="ok">✓ 완료 · 다운로드됨</span><br>'+pills;
   }catch(err){status.innerHTML='<span class="er">✗ 네트워크 오류</span>';}
   go.disabled=false;
 };

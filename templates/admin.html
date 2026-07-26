@@ -2,11 +2,14 @@
 {% block title %}관리자 · 사용자 관리{% endblock %}
 {% block content %}
 <div class="card">
-  <h2>사용자 관리</h2>
+  <h2>사용자 관리
+    <span class="pill" style="margin-left:6px;font-weight:700;{% if backend=='postgres' %}background:#eaf5ee;border-color:#bfe0cb;color:#1B7F4B{% else %}background:#fff8ec;border-color:#f0dcae;color:#7a5a12{% endif %}">저장소: {{ '🟢 Postgres' if backend=='postgres' else '📁 파일' }}</span></h2>
   <p class="muted">사용자 아이디·비밀번호를 등록·변경·삭제합니다. 비밀번호는 해시로만 저장되며 평문은 저장되지 않습니다.</p>
-  {% if not persistent %}
-  <div class="note">⚠ 현재 서버에 <b>영구 저장 볼륨이 설정되지 않았습니다</b>. 여기서 추가/변경한 사용자는 서버 재배포·재시작 시 사라질 수 있습니다.
-  아래 <b>사용자 설정 백업(USERS_JSON)</b>을 복사해 Railway Variables의 <code>USERS_JSON</code>에 붙여넣어 두거나, Railway에 Volume을 마운트하고 <code>USERS_FILE</code>을 설정하세요(설명서 참조).</div>
+  {% if backend=='postgres' %}
+  <div class="note" style="background:#eaf5ee;border-color:#bfe0cb;color:#1B7F4B">✅ Postgres에 영구 저장 중입니다. 사용자·회차 데이터가 재배포 후에도 유지됩니다.</div>
+  {% elif not persistent %}
+  <div class="note">⚠ 현재 서버에 <b>영구 저장(Postgres/Volume)이 설정되지 않았습니다</b>. 여기서 추가/변경한 사용자는 서버 재배포·재시작 시 사라질 수 있습니다.
+  <code>DATABASE_URL</code>(Postgres 참조변수)을 설정하거나, 아래 <b>USERS_JSON 백업</b>을 Railway Variables에 저장, 또는 Volume+<code>USERS_FILE</code>을 설정하세요(설명서 참조).</div>
   {% endif %}
 
   <h3>등록된 사용자</h3>

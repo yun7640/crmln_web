@@ -1,0 +1,334 @@
+{
+ "surveys": [
+  "2023.1",
+  "2023.7",
+  "2024.1",
+  "2024.7",
+  "2025.1",
+  "2025.7",
+  "2026.1",
+  "2026.7"
+ ],
+ "criteria": {
+  "qc": {
+   "NIST": {
+    "lim": 1.0,
+    "unit": "%",
+    "label": "NIST SRM (TC 앵커)"
+   },
+   "BF": {
+    "lim": 1.0,
+    "unit": "%",
+    "label": "BF / matrix control (TC)"
+   },
+   "HDL": {
+    "lim": 2.0,
+    "unit": "%",
+    "label": "HDL-C control"
+   },
+   "LDL": {
+    "lim": 2.0,
+    "unit": "%",
+    "label": "LDL-C control"
+   }
+  },
+  "ps": {
+   "TC": {
+    "bias": 1.0,
+    "cv": 1.0,
+    "unit": "%"
+   },
+   "HDL": {
+    "bias": 1.0,
+    "cv": 1.0,
+    "unit": "mg/dL"
+   },
+   "LDL": {
+    "bias": 2.0,
+    "cv": 1.5,
+    "unit": "%"
+   }
+  },
+  "dcm": {
+   "bias": 1.0,
+   "sd": 1.0,
+   "unit": "mg/dL"
+  },
+  "member": {
+   "TC": {
+    "bias_pct": 1.0,
+    "cv_pct": 1.0
+   },
+   "HDL": {
+    "bias_mgdl": 1.0,
+    "sd": 1.0
+   },
+   "LDL": {
+    "bias_pct": 2.0,
+    "cv_pct": 1.5
+   }
+  }
+ },
+ "qc_bias": {
+  "NIST": {
+   "lim": 1.0,
+   "unit": "%",
+   "label": "NIST SRM (TC 앵커)",
+   "points": {
+    "2023.1": 0.019,
+    "2023.7": -0.584,
+    "2024.1": -0.141,
+    "2024.7": -0.13,
+    "2025.1": 0.115,
+    "2025.7": -0.138,
+    "2026.1": 0.096,
+    "2026.7": 0.231
+   }
+  },
+  "BF": {
+   "lim": 1.0,
+   "unit": "%",
+   "label": "BF / matrix control (TC)",
+   "points": {
+    "2023.1": 0.91,
+    "2023.7": 0.179,
+    "2024.1": 0.709,
+    "2024.7": 0.225,
+    "2025.1": 1.284,
+    "2025.7": 0.238,
+    "2026.1": 1.351,
+    "2026.7": 0.811
+   }
+  },
+  "HDL": {
+   "lim": 2.0,
+   "unit": "%",
+   "label": "HDL-C control",
+   "points": {
+    "2023.1": 2.386,
+    "2023.7": 1.554,
+    "2024.1": 0.195,
+    "2024.7": -1.474,
+    "2025.1": 1.546,
+    "2025.7": 0.007,
+    "2026.1": 0.05,
+    "2026.7": -0.234
+   }
+  },
+  "LDL": {
+   "lim": 2.0,
+   "unit": "%",
+   "label": "LDL-C control",
+   "points": {
+    "2023.1": 0.308,
+    "2023.7": -0.392,
+    "2024.1": 0.927,
+    "2024.7": 0.931,
+    "2025.1": 1.18,
+    "2025.7": 0.328,
+    "2026.1": 1.908,
+    "2026.7": 1.247
+   }
+  }
+ },
+ "ps_eval": {
+  "2023.1": {
+   "TC": {
+    "bias": -0.84,
+    "cv": 0.31,
+    "unit": "%",
+    "cert": true
+   },
+   "HDL": {
+    "bias": 1.0,
+    "cv": 0.49,
+    "unit": "mg/dL",
+    "bias_pct": 1.91,
+    "cert": true
+   },
+   "LDL": {
+    "bias": -2.89,
+    "cv": 1.16,
+    "unit": "%",
+    "pass_tcak": "YES",
+    "cert": false
+   }
+  },
+  "2023.7": {
+   "TC": {
+    "bias": -1.16,
+    "cv": 0.19,
+    "unit": "%",
+    "cert": false
+   },
+   "HDL": {
+    "bias": 0.3,
+    "cv": 0.68,
+    "unit": "mg/dL",
+    "bias_pct": 0.5,
+    "cert": true
+   },
+   "LDL": {
+    "bias": -1.53,
+    "cv": 0.67,
+    "unit": "%",
+    "pass_tcak": "NO",
+    "cert": false
+   }
+  },
+  "2024.1": {
+   "TC": {
+    "bias": -0.94,
+    "cv": 0.12,
+    "unit": "%",
+    "cert": true
+   },
+   "HDL": {
+    "bias": 0.17,
+    "cv": 0.42,
+    "unit": "mg/dL",
+    "bias_pct": 0.38,
+    "cert": true
+   },
+   "LDL": {
+    "bias": -1.66,
+    "cv": 0.57,
+    "unit": "%",
+    "pass_tcak": "YES",
+    "cert": true
+   }
+  },
+  "2024.7": {
+   "TC": {
+    "bias": -0.46,
+    "cv": 0.16,
+    "unit": "%",
+    "cert": true
+   },
+   "HDL": {
+    "bias": -1.26,
+    "cv": 0.35,
+    "unit": "mg/dL",
+    "bias_pct": -2.5,
+    "cert": false
+   },
+   "LDL": {
+    "bias": -0.71,
+    "cv": 0.72,
+    "unit": "%",
+    "pass_tcak": "YES",
+    "cert": true
+   }
+  },
+  "2025.1": {
+   "TC": {
+    "bias": -0.73,
+    "cv": 0.28,
+    "unit": "%",
+    "cert": true
+   },
+   "HDL": {
+    "bias": 0.75,
+    "cv": 0.25,
+    "unit": "mg/dL",
+    "bias_pct": 1.56,
+    "cert": true
+   },
+   "LDL": {
+    "bias": -1.2,
+    "cv": 0.56,
+    "unit": "%",
+    "pass_tcak": "YES",
+    "cert": true
+   }
+  },
+  "2025.7": {
+   "TC": {
+    "bias": 0.37,
+    "cv": 0.16,
+    "unit": "%",
+    "cert": true
+   },
+   "HDL": {
+    "bias": -0.59,
+    "cv": 0.29,
+    "unit": "mg/dL",
+    "bias_pct": -0.98,
+    "cert": true
+   },
+   "LDL": {
+    "bias": -1.11,
+    "cv": 0.71,
+    "unit": "%",
+    "pass_tcak": "YES",
+    "cert": true
+   }
+  },
+  "2026.1": {
+   "TC": {
+    "bias": 0.1,
+    "cv": 0.36,
+    "unit": "%",
+    "cert": true
+   },
+   "HDL": {
+    "bias": -0.67,
+    "cv": 0.3,
+    "unit": "mg/dL",
+    "bias_pct": -1.26,
+    "cert": true
+   },
+   "LDL": {
+    "bias": -0.32,
+    "cv": 0.59,
+    "unit": "%",
+    "pass_tcak": "YES",
+    "cert": true
+   }
+  }
+ },
+ "dcm_eval": {
+  "2023.1": {
+   "bias": -1.73,
+   "sd": 0.59,
+   "unit": "mg/dL",
+   "cert": false
+  },
+  "2023.7": {
+   "bias": -0.14,
+   "sd": 0.75,
+   "unit": "mg/dL",
+   "cert": true
+  },
+  "2024.1": {
+   "bias": -0.44,
+   "sd": 0.22,
+   "unit": "mg/dL",
+   "cert": true
+  },
+  "2024.7": {
+   "bias": 0.72,
+   "sd": 0.28,
+   "unit": "mg/dL",
+   "cert": true
+  },
+  "2025.1": {
+   "bias": -0.61,
+   "sd": 0.21,
+   "unit": "mg/dL",
+   "cert": true
+  },
+  "2025.7": {
+   "bias": -0.1,
+   "sd": 0.15,
+   "unit": "mg/dL",
+   "cert": true
+  },
+  "2026.1": {
+   "bias": -1.5,
+   "sd": 0.22,
+   "unit": "mg/dL",
+   "cert": false
+  }
+ }
+}

@@ -1,0 +1,216 @@
+{% extends 'base.html' %}
+{% block title %}회차 누적분석{% endblock %}
+{% block content %}
+<style>
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:820px){.grid2{grid-template-columns:1fr}}
+  .chartbox{position:relative;height:230px}
+  .up{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+  .up .fld{display:flex;flex-direction:column;gap:3px}
+  .up label{font-size:11px;color:var(--muted);font-weight:700}
+  .drop{border:2px dashed #b9c6d4;border-radius:9px;padding:12px 16px;text-align:center;font-size:12px;color:var(--muted);cursor:pointer;min-width:230px}
+  .drop.drag{border-color:var(--blue);background:#eef5fb;color:var(--blue)}
+  .stat{font-size:12px;margin-top:8px;line-height:1.7}
+  .stat .ok{color:var(--good)}.stat .er{color:var(--crit)}
+  .subtab{display:inline-block;padding:5px 10px;border:1px solid var(--line);border-radius:7px;font-size:12px;cursor:pointer;background:#fff;margin:0 4px 4px 0}
+  .subtab.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+  table.sub{font-size:12px}
+  table.sub th,table.sub td{padding:5px 7px;text-align:center}
+  .strike{text-decoration:line-through;color:var(--crit)}
+  .sel{font-weight:800;color:var(--good)}
+  .warnrow{color:var(--crit);font-weight:700}
+  .legend{font-size:11px;color:var(--muted);margin:4px 0 0}
+  .kchip{display:inline-block;font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--line);margin:1px}
+  .kchip.g{background:#eaf5ee;border-color:#bfe0cb;color:#1B7F4B}
+  .kchip.r{background:#fbecea;border-color:#e6b5ac;color:#C0392B}
+</style>
+
+<div class="card">
+  <h2>📈 CRMLN 회차 누적분석 (연 2회)</h2>
+  <p class="muted">KDCA NMRL(Lab 509). 매 회차 측정결과 엑셀을 올리면 서버에 회차별로 누적 저장되어 경향(QC bias·평가)·제출 결과(HDLC-UC / HDLC-DCM)를 함께 분석합니다. UC(β-정량)·DCM 측정지는 자동 감지됩니다.
+    <span class="pill" style="margin-left:6px;{% if backend=='postgres' %}background:#eaf5ee;border-color:#bfe0cb;color:#1B7F4B{% else %}background:#fff8ec;border-color:#f0dcae;color:#7a5a12{% endif %}">저장소: {{ '🟢 Postgres' if backend=='postgres' else '📁 파일' }}</span></p>
+
+  <div class="up">
+    <div class="drop" id="drop">측정 .xlsx 끌어놓기 / 클릭</div>
+    <input type="file" id="file" accept=".xlsx,.xlsm" style="display:none">
+    <div class="fld"><label>회차 라벨</label><input type="text" id="label" placeholder="예: 2026.7" size="10"></div>
+    <div class="fld"><label>측정일(선택)</label><input type="text" id="date" placeholder="예: 2026-07" size="10"></div>
+    <button id="go" disabled>회차 추가 · 검토파일 생성</button>
+  </div>
+  <div class="stat" id="stat"></div>
+  {% if not persistent %}
+  <div class="note" style="margin-top:10px">⚠ 서버 영구 저장 경로(<code>ROUNDS_FILE</code>+Volume)가 설정되지 않았습니다. 재배포 시 누적 데이터가 초기화될 수 있으니, 관리자 화면 또는 아래 <b>백업 내보내기</b>로 주기적으로 보관하세요.</div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>QC · Control bias 경향</h2>
+  <p class="legend">점선 = CRMLN member laboratory 허용 한계. 값은 회차별 관리물질 평균 bias. (내부 QC 정확도 · 측정지 기반)</p>
+  <div class="grid2">
+    <div><h3>NIST(TC) · BF (±1%)</h3><div class="chartbox"><canvas id="c_tcbf"></canvas></div></div>
+    <div><h3>HDL · LDL control (±2%)</h3><div class="chartbox"><canvas id="c_hdlldl"></canvas></div></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>CRMLN 평가보고서(PS) · HDLC-DCM 경향</h2>
+  <p class="legend">CDC 평가보고서 기준 인증 경향(과거 이력). PS: TC·LDL bias(%)·HDL bias(mg/dL). DCM: HDL bias(mg/dL, ±1.0).</p>
+  <div class="grid2">
+    <div><h3>PS 평가 bias</h3><div class="chartbox"><canvas id="c_ps"></canvas></div></div>
+    <div><h3>HDLC-DCM bias (mg/dL, ±1.0)</h3><div class="chartbox"><canvas id="c_dcm"></canvas></div></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>회차별 CRMLN 제출 결과 (선택 2/3)</h2>
+  <div id="rtabs" style="margin-bottom:10px"></div>
+  <div id="rbody"><p class="muted">저장된 업로드 회차가 없습니다. 위에서 측정 파일을 추가하세요.</p></div>
+</div>
+
+{% if is_admin %}
+<div class="card">
+  <h2>🛠 누적 데이터 관리 (관리자)</h2>
+  <p class="muted">회차 저장은 서버 <code>ROUNDS_FILE</code>에 보관됩니다. 백업 파일을 내려받아 두면 재배포/이전 시 복구할 수 있습니다.</p>
+  <div class="up">
+    <a class="btn" href="{{ url_for('rounds_export') }}" style="text-decoration:none">⬇ 백업 내보내기(JSON)</a>
+    <form method="post" action="{{ url_for('rounds_import') }}" enctype="multipart/form-data" style="display:inline-flex;gap:8px;align-items:center">
+      <input type="file" name="file" accept=".json" required>
+      <button class="ghost" type="submit">⬆ 백업 가져오기</button>
+    </form>
+  </div>
+  {% if round_list %}
+  <table style="margin-top:12px"><thead><tr><th>회차</th><th>측정일</th><th>UC</th><th>DCM</th><th>삭제</th></tr></thead><tbody>
+    {% for r in round_list %}
+    <tr>
+      <td>{{ r.label }}</td><td>{{ r.date or '—' }}</td>
+      <td>{{ '✓' if r.has_uc else '—' }}</td><td>{{ '✓' if r.has_dcm else '—' }}</td>
+      <td>
+        <form method="post" action="{{ url_for('rounds_delete') }}" style="display:inline"
+              onsubmit="return confirm('{{ r.label }} 회차를 삭제할까요?')">
+          <input type="hidden" name="label" value="{{ r.label }}">
+          <button class="danger" type="submit">삭제</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody></table>
+  {% endif %}
+</div>
+{% endif %}
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+const DATA = {{ payload_json|safe }};
+const COL = {NIST:'#2C6E9B', BF:'#B9770E', HDL:'#1B7F4B', LDL:'#8E44AD', TC:'#2C6E9B'};
+
+function lineDS(name, color, surveys, points, opt={}){
+  return Object.assign({label:name, borderColor:color, backgroundColor:color,
+    data:surveys.map(s=> (points && points[s]!=null)? points[s] : null),
+    spanGaps:true, tension:.25, pointRadius:3, borderWidth:2}, opt);
+}
+function limDS(name, val, color){
+  return {label:name, borderColor:color, borderDash:[5,4], borderWidth:1,
+    pointRadius:0, data:DATA.surveys.map(()=>val), fill:false};
+}
+const baseOpt = {responsive:true, maintainAspectRatio:false,
+  plugins:{legend:{labels:{font:{size:10},boxWidth:12}}},
+  scales:{x:{ticks:{font:{size:10}}}, y:{ticks:{font:{size:10}}}}};
+
+// ---- QC bias charts ----
+new Chart(document.getElementById('c_tcbf'), {type:'line', data:{labels:DATA.surveys, datasets:[
+  lineDS('NIST(TC)', COL.NIST, DATA.surveys, (DATA.qc_bias.NIST||{}).points),
+  lineDS('BF', COL.BF, DATA.surveys, (DATA.qc_bias.BF||{}).points),
+  limDS('+1%', 1.0, '#c0392b'), limDS('-1%', -1.0, '#c0392b')
+]}, options:baseOpt});
+
+new Chart(document.getElementById('c_hdlldl'), {type:'line', data:{labels:DATA.surveys, datasets:[
+  lineDS('HDL', COL.HDL, DATA.surveys, (DATA.qc_bias.HDL||{}).points),
+  lineDS('LDL', COL.LDL, DATA.surveys, (DATA.qc_bias.LDL||{}).points),
+  limDS('+2%', 2.0, '#c0392b'), limDS('-2%', -2.0, '#c0392b')
+]}, options:baseOpt});
+
+// ---- PS eval ----
+const psS = Object.keys(DATA.ps_eval||{});
+function psPts(an, key){const o={}; psS.forEach(s=>{const e=DATA.ps_eval[s][an]; if(e&&e[key]!=null)o[s]=e[key];}); return o;}
+new Chart(document.getElementById('c_ps'), {type:'line', data:{labels:DATA.surveys, datasets:[
+  lineDS('TC bias(%)', COL.TC, DATA.surveys, psPts('TC','bias')),
+  lineDS('LDL bias(%)', COL.LDL, DATA.surveys, psPts('LDL','bias')),
+  lineDS('HDL bias(mg/dL)', COL.HDL, DATA.surveys, psPts('HDL','bias'), {yAxisID:'y2'})
+]}, options:Object.assign({}, baseOpt, {scales:{x:{ticks:{font:{size:10}}},
+  y:{position:'left',ticks:{font:{size:10}},title:{display:true,text:'%',font:{size:9}}},
+  y2:{position:'right',grid:{drawOnChartArea:false},ticks:{font:{size:10}},title:{display:true,text:'mg/dL',font:{size:9}}}}})});
+
+// ---- DCM ----
+const dcmOff={}, dcmUp=DATA.dcm_qc_upload||{};
+Object.keys(DATA.dcm_eval||{}).forEach(s=>{if(DATA.dcm_eval[s].bias!=null)dcmOff[s]=DATA.dcm_eval[s].bias;});
+new Chart(document.getElementById('c_dcm'), {type:'line', data:{labels:DATA.surveys, datasets:[
+  lineDS('공식 DCM bias(CDC)', COL.HDL, DATA.surveys, dcmOff),
+  lineDS('업로드 HDL Control bias', COL.BF, DATA.surveys, dcmUp, {borderDash:[2,2]}),
+  limDS('+1.0', 1.0, '#c0392b'), limDS('-1.0', -1.0, '#c0392b')
+]}, options:baseOpt});
+
+// ---- 회차별 제출 결과 ----
+const labels = DATA.round_labels||[];
+const rtabs=document.getElementById('rtabs'), rbody=document.getElementById('rbody');
+function esc(x){return (x==null)?'':(''+x);}
+function ucTable(uc){
+  if(!uc) return '<p class="muted">UC(β-정량) 데이터 없음.</p>';
+  let h='<h3>HDLC-UC (β-quantification) 제출 선택</h3>';
+  h+=qcChips(uc.qc);
+  h+='<table class="sub"><thead><tr><th>검체</th><th>Day</th><th>제외R</th><th>채택R</th><th>BF</th><th>HDL</th><th>LDL</th><th>LDL cv%</th></tr></thead><tbody>';
+  (uc.samples||[]).forEach(s=>{h+=`<tr><td>${esc(s.name)}</td><td>${s.day}</td><td class="strike">R${s.drop}</td><td class="sel">R${s.keep.join('·R')}</td><td>${s.BF}</td><td>${s.HDL}</td><td>${s.LDL}</td><td>${s.cvL}</td></tr>`;});
+  h+='</tbody></table>';return h;
+}
+function dcmTable(dcm){
+  if(!dcm) return '<p class="muted">DCM 데이터 없음.</p>';
+  let h='<h3>HDLC-DCM (Designated Comparison Method) 제출 선택</h3>';
+  h+=qcChips(dcm.qc);
+  h+='<table class="sub"><thead><tr><th>검체</th><th>Day</th><th>제외R</th><th>채택R</th><th>HDL 채택</th><th>cv%</th></tr></thead><tbody>';
+  (dcm.samples||[]).forEach(s=>{h+=`<tr><td>${esc(s.name)}</td><td>${s.day}</td><td class="strike">R${s.drop}</td><td class="sel">R${s.keep.join('·R')}</td><td class="sel">${s.HDL}</td><td>${s.cv}</td></tr>`;});
+  h+='</tbody></table>';return h;
+}
+function qcChips(qc){
+  if(!qc||!qc.length) return '';
+  let h='<p class="legend">QC·Control 판정: ';
+  qc.forEach(q=>{const v=(q.biasmgdl!=null)?(q.biasmgdl+' mg/dL'):(q.biaspct+'%');
+    h+=`<span class="kchip ${q.ok?'g':'r'}">${esc(q.name)} D${q.day} ${v}${q.ok?'✓':'⚠'}</span>`;});
+  h+='</p>';return h;
+}
+function showRound(lab){
+  [...rtabs.children].forEach(c=>c.classList.toggle('on', c.dataset.l===lab));
+  const r=DATA.uploaded[lab]||{};
+  rbody.innerHTML = `<p class="muted">회차 <b>${esc(lab)}</b>${r.date?(' · '+esc(r.date)):''} · 정밀도 기반 median 이상치 제외(취소선), 나머지 2개 채택. QC/Control 미제출.</p>`
+    + ucTable(r.uc) + dcmTable(r.dcm);
+}
+if(labels.length){
+  labels.forEach(l=>{const b=document.createElement('span');b.className='subtab';b.dataset.l=l;b.textContent=l;b.onclick=()=>showRound(l);rtabs.appendChild(b);});
+  showRound(labels[labels.length-1]);
+}
+
+// ---- 업로드 ----
+const drop=document.getElementById('drop'),file=document.getElementById('file'),go=document.getElementById('go'),
+      stat=document.getElementById('stat'),labIn=document.getElementById('label'),dateIn=document.getElementById('date');
+let chosen=null;
+function setFile(f){chosen=f;go.disabled=!(f&&labIn.value.trim());drop.textContent=f?('📄 '+f.name):'측정 .xlsx 끌어놓기 / 클릭';}
+drop.onclick=()=>file.click();
+file.onchange=e=>setFile(e.target.files[0]);
+labIn.oninput=()=>{go.disabled=!(chosen&&labIn.value.trim());};
+['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('drag');}));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('drag');}));
+drop.addEventListener('drop',e=>{if(e.dataTransfer.files[0])setFile(e.dataTransfer.files[0]);});
+go.onclick=async()=>{
+  if(!chosen||!labIn.value.trim())return;
+  go.disabled=true;stat.innerHTML='처리 중…';
+  const fd=new FormData();fd.append('file',chosen);fd.append('label',labIn.value.trim());fd.append('date',dateIn.value.trim());
+  try{
+    const r=await fetch('{{ url_for("rounds_add") }}',{method:'POST',body:fd});
+    if(!r.ok){const j=await r.json().catch(()=>({error:'오류'}));stat.innerHTML='<span class="er">✗ '+(j.error||'실패')+'</span>';go.disabled=false;return;}
+    const meta=JSON.parse(r.headers.get('X-Round-Result')||'{}');
+    const blob=await r.blob();const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');a.href=url;a.download=(chosen.name.replace(/\.(xlsx|xlsm)$/i,''))+'_검토.xlsx';a.click();URL.revokeObjectURL(url);
+    stat.innerHTML='<span class="ok">✓ '+(meta.message||'저장됨')+'</span> · 검토파일 다운로드됨. 경향 반영을 위해 새로고침합니다…';
+    setTimeout(()=>location.reload(),1200);
+  }catch(err){stat.innerHTML='<span class="er">✗ 네트워크 오류</span>';go.disabled=false;}
+};
+</script>
+{% endblock %}

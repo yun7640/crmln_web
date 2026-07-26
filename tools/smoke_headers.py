@@ -390,6 +390,18 @@ def main():
     check('가이드에 유리한 선택 지양 원칙', '유리하게 만들기 위한 선택은 지양' in gtxt)
     check('가이드에 검증 열 안내', '불일치' in gtxt)
 
+    # (5d) DCM 내부 QC bias 시드(2025.7·2026.1·2026.7) — 평가 bias와 병기되어야 한다
+    P3 = R.dashboard_payload()
+    seedqc = P3.get('dcm_qc_seed') or {}
+    check('DCM QC 시드에 2025.7·2026.1·2026.7', {'2025.7', '2026.1', '2026.7'} <= set(seedqc), sorted(seedqc))
+    check('2026.1 내부 QC가 음(−) 방향', seedqc.get('2026.1', 0) < 0, seedqc.get('2026.1'))
+    check('2026.1 평가도 음(−) 방향(대응 확인)',
+          (P3['dcm_eval'].get('2026.1') or {}).get('bias', 0) < 0)
+    paired = [s for s in P3['surveys'] if s in (P3.get('dcm_qc_upload') or {}) and s in P3['dcm_eval']]
+    check('내부 QC·평가 짝 데이터 2개 이상', len(paired) >= 2, paired)
+    check('시드 QC는 별도 보존(업로드가 덮어쓰지 않음)', isinstance(P3.get('dcm_qc_seed'), dict))
+    check('업로드 전용 계열도 분리 제공', isinstance(P3.get('dcm_qc_upload_only'), dict))
+
     # (6) drop 리스트를 stats가 집계할 수 있어야 한다(구 정수 형식도 호환)
     import stats as _S2  # noqa: E402
     mixed = {'2026.7': {'label': '2026.7',

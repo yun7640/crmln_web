@@ -366,15 +366,23 @@ def dashboard_payload():
                                   'reference': is_reference(r)})
     conflicts.sort(key=lambda c: (_key(c['label']), c['analyte']))
 
-    # 3) DCM QC HDL Control bias 트렌드(업로드 DCM 회차; mg/dL)
-    dcm_qc = {}
+    # 3) DCM QC HDL Control bias 트렌드(mg/dL)
+    #    시드(측정지에서 확정한 과거 회차) + 업로드 회차. 시드는 별도로도 보존해 병기한다(§0).
+    dcm_qc_seed = {}
+    for label, meta in (seed.get('dcm_qc') or {}).items():
+        v = (meta or {}).get('HDL_mgdl')
+        if v is not None:
+            dcm_qc_seed[label] = v
+    dcm_qc = dict(dcm_qc_seed)
+    dcm_qc_upload_only = {}
     for label, r in store.items():
         dcm = r.get('dcm')
         if not dcm:
             continue
         b = dcm.get('qc_bias', {}).get('HDL_mgdl')
         if b is not None:
-            dcm_qc[label] = b
+            dcm_qc_upload_only[label] = b
+            dcm_qc[label] = b       # 업로드가 있으면 최신 측정으로 갱신(시드는 아래에 그대로 보존)
 
     # 4) 업로드 회차 상세(제출 선택표·QC 판정)
     uploaded = {}
@@ -395,6 +403,8 @@ def dashboard_payload():
         'ps_eval': seed.get('ps_eval', {}),
         'dcm_eval': seed.get('dcm_eval', {}),
         'dcm_qc_upload': dcm_qc,
+        'dcm_qc_seed': dcm_qc_seed,
+        'dcm_qc_upload_only': dcm_qc_upload_only,
         'uploaded': uploaded,
         'round_labels': sorted(store, key=_key),
         'reference_labels': reference_labels,

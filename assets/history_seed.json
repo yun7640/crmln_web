@@ -330,5 +330,35 @@
    "unit": "mg/dL",
    "cert": false
   }
- }
+ },
+ "dcm_qc": {
+  "2025.7": {
+   "HDL_mgdl": 0.082,
+   "n": 4,
+   "src": "0725_CRMLN_HDL-DCM_AK_결과정리.xlsx",
+   "exp": [
+    "2025-06-13",
+    "2025-06-20"
+   ]
+  },
+  "2026.1": {
+   "HDL_mgdl": -1.01,
+   "n": 4,
+   "src": "0126_CRMLN_HDL-DCM_AK_정리.xlsx",
+   "exp": [
+    "2026-01-06",
+    "2026-01-08"
+   ]
+  },
+  "2026.7": {
+   "HDL_mgdl": 0.037,
+   "n": 4,
+   "src": "0726._CRMLN_HDL-DCM_AK_검토요청.xlsx",
+   "exp": [
+    "2026-07-21",
+    "2026-07-22"
+   ]
+  }
+ },
+ "dcm_qc_note": "DCM 측정지에서 산출한 내부 HDL Control bias(mg/dL) 회차 평균. CDC 평가 bias(dcm_eval)와는 다른 지표이므로 서로 대체하지 않고 병기한다."
 }

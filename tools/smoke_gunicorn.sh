@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# 스모크 검증 ② — 실제 gunicorn으로 기동해 HTTP 레벨 검증.
+#
+# 왜 필요한가: Flask 개발서버/test_client는 한글 헤더를 관대하게 통과시키지만
+# gunicorn(Railway 운영 환경)은 latin-1 위반 시 500을 낸다. 배포 전 반드시 여기서 확인한다.
+#
+# 실행:  bash tools/smoke_gunicorn.sh
+# 종료코드 0=통과, 1=실패.
+#
+# ⚠️ gunicorn은 Linux/macOS 전용이다. Windows에서는 실행되지 않으므로
+#    클라우드 세션(Linux 컨테이너) 또는 WSL에서 돌릴 것.
+#    Windows에서는 tools/smoke_headers.py 로 대체 검증한다.
+#
+# ⚠️ 사용하는 측정 파일은 tools/make_fixture.py 가 만든 합성 데이터이며 실제 CRMLN 결과가 아니다.
+set -u
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT" || exit 1
+
+if ! python3 -c 'import gunicorn' 2>/dev/null; then
+  echo "SKIP: gunicorn 미설치/미지원 환경입니다. (Windows라면 정상)"
+  echo "      대신 'python tools/smoke_headers.py' 를 실행하세요."
+  exit 0
+fi
+
+PORT="${PORT:-8931}"
+TMP="$(mktemp -d)"
+LOG="$TMP/gunicorn.log"
+
+export SECRET_KEY='smoke-test-key'
+export ADMIN_USERS='admin'
+export ADMIN_PASSWORD='smoke-pw'
+export USERS_FILE="$TMP/users.json"
+export ROUNDS_FILE="$TMP/rounds.json"
+unset DATABASE_URL
+
+python3 tools/make_fixture.py --out "$TMP/fx" >/dev/null || { echo "FAIL: fixture 생성 실패"; exit 1; }
+
+python3 -m gunicorn app:app --bind "127.0.0.1:$PORT" --workers 1 --timeout 60 \
+  --log-file "$LOG" --access-logfile /dev/null >/dev/null 2>&1 &
+PID=$!
+
+cleanup() { kill "$PID" 2>/dev/null; wait "$PID" 2>/dev/null; rm -rf "$TMP"; }
+trap cleanup EXIT
+
+# 기동 대기
+for _ in $(seq 1 60); do
+  if python3 -c "import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:$PORT/healthz',timeout=1)" 2>/dev/null; then
+    break
+  fi
+  sleep 0.5
+done
+
+PORT="$PORT" FX="$TMP/fx" python3 - <<'PY'
+import http.cookiejar, json, os, sys, urllib.request, uuid
+
+PORT = os.environ['PORT']; FX = os.environ['FX']
+BASE = 'http://127.0.0.1:%s' % PORT
+opener = urllib.request.build_opener(
+    urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+
+fails, n = [], [0]
+
+
+def check(name, cond, detail=''):
+    n[0] += 1
+    print(('  PASS  ' if cond else '  FAIL  ') + name + ('' if cond else '  %s' % (detail,)))
+    if not cond:
+        fails.append(name)
+
+
+def latin1_ok(resp, where):
+    bad = []
+    for k, v in resp.getheaders():
+        for part in (k, v):
+            try:
+                part.encode('latin-1')
+            except UnicodeEncodeError:
+                bad.append('%s=%r' % (k, part))
+    check('%s: 헤더 latin-1 안전(실 HTTP)' % where, not bad, bad)
+
+
+def post_form(path, fields):
+    b = uuid.uuid4().hex
+    body = b''
+    for k, v in fields.items():
+        body += ('--%s\r\nContent-Disposition: form-data; name="%s"\r\n\r\n%s\r\n' % (b, k, v)).encode()
+    body += ('--%s--\r\n' % b).encode()
+    req = urllib.request.Request(BASE + path, data=body,
+                                 headers={'Content-Type': 'multipart/form-data; boundary=%s' % b})
+    return opener.open(req, timeout=60)
+
+
+def post_file(path, filename, data, fields):
+    b = uuid.uuid4().hex
+    body = b''
+    for k, v in fields.items():
+        body += ('--%s\r\nContent-Disposition: form-data; name="%s"\r\n\r\n%s\r\n' % (b, k, v)).encode()
+    body += ('--%s\r\nContent-Disposition: form-data; name="file"; filename="%s"\r\n'
+             'Content-Type: application/octet-stream\r\n\r\n' % (b, filename)).encode()
+    body += data + ('\r\n--%s--\r\n' % b).encode()
+    req = urllib.request.Request(BASE + path, data=body,
+                                 headers={'Content-Type': 'multipart/form-data; boundary=%s' % b})
+    return opener.open(req, timeout=120)
+
+
+print('[G1] gunicorn 기동 확인')
+r = opener.open(BASE + '/healthz', timeout=10)
+check('/healthz 200', r.status == 200, r.status)
+check('/healthz ok=true', json.loads(r.read()) == {'ok': True})
+
+print('[G2] 로그인')
+r = post_form('/login', {'username': 'admin', 'password': 'smoke-pw'})
+check('로그인 후 200', r.status == 200, r.status)
+latin1_ok(r, '/login')
+
+print('[G3] 업로드 — 한글 파일명 + 한글 응답 메시지 (500 재발 감시 지점)')
+uc = open(os.path.join(FX, 'fixture_UC_합성.xlsx'), 'rb').read()
+try:
+    r = post_file('/rounds/add', '2026.7 측정결과_한글이름.xlsx', uc, {'label': '2026-07'})
+except urllib.error.HTTPError as e:
+    check('/rounds/add 200 (한글 헤더 500 아님)', False, 'HTTP %s: %s' % (e.code, e.read()[:300]))
+else:
+    check('/rounds/add 200 (한글 헤더 500 아님)', r.status == 200, r.status)
+    latin1_ok(r, '/rounds/add')
+    body = r.read()
+    check('엑셀(zip) 반환', body[:2] == b'PK', body[:8])
+    xrr = r.getheader('X-Round-Result')
+    check('X-Round-Result 존재', bool(xrr))
+    if xrr:
+        d = json.loads(xrr)
+        check('stored=True', d.get('stored') is True, d)
+        check('한글 메시지 복원', any('가' <= c <= '힣' for c in str(d.get('message', ''))), d.get('message'))
+
+print('[G4] /rounds/data')
+r = opener.open(BASE + '/rounds/data', timeout=30)
+check('/rounds/data 200', r.status == 200, r.status)
+latin1_ok(r, '/rounds/data')
+p = json.loads(r.read().decode('utf-8'))
+check('is_admin 주입', p.get('is_admin') is True, p.get('is_admin'))
+check('2026.7 누적됨', '2026.7' in (p.get('round_labels') or []), p.get('round_labels'))
+
+print('\n=== %d개 검사 중 실패 %d ===' % (n[0], len(fails)))
+sys.exit(1 if fails else 0)
+PY
+RC=$?
+
+if [ "$RC" -ne 0 ]; then
+  echo "--- gunicorn 로그(마지막 30줄) ---"
+  tail -30 "$LOG" 2>/dev/null
+fi
+exit "$RC"

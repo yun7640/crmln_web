@@ -6,3 +6,7 @@ data/
 *.xlsx
 !assets/*.xlsx
 .DS_Store
+
+# 스모크 검증 산출물 (tools/README.md 참조)
+tools/vendor/
+tools/_fixtures/

@@ -66,17 +66,21 @@ private/
 assets/
   select_template.xlsx     동적 선택 시트 템플릿(수식·조건부서식 보존, 값 주입 방식)
   history_seed.json        과거 이력 2023.1–2026.7(QC bias·PS평가·DCM평가·기준) 시드
+tools/                     ★ 배포 전 스모크 검증 (tools/README.md 참조)
+  make_fixture.py          합성 측정지 생성(UC/DCM) — ⚠️ 가짜 데이터, 판정·제출 금지
+  smoke_headers.py         앱 기능 + HTTP 헤더 latin-1 안전성 (41검사, Windows 포함 어디서나)
+  smoke_gunicorn.sh        실제 gunicorn 기동 후 HTTP 레벨 재검증 (14검사, Linux/WSL 전용)
+  smoke_tab6.py            Playwright headless로 ⑥탭 Chart.js 렌더 검증 (11검사)
+  README.md                실행법·막는 버그 목록
 requirements.txt  Procfile  railway.json  runtime.txt  README.md  make_user.py
+.gitignore                 (tools/vendor/, tools/_fixtures/ 제외 포함)
 HANDOVER_인수인계.md        (이 문서)
 ```
 
 주의: `.gitignore`가 `*.xlsx`를 무시하되 `!assets/*.xlsx`로 템플릿만 포함. `data/`(로컬 저장), `users.json`은 커밋 제외. `assets/select_template.xlsx`와 `assets/history_seed.json`은 반드시 리포에 포함되어야 함(앱 동작 필수).
 
-> **★ 실제 리포 추적 상태 확인(2026-07-26, `git ls-files` 기준):**
-> 현재 GitHub `yun7640/crmln_web` main(`231ea36`)에 실제로 추적되는 파일은 위 목록 중
-> `.gitignore`, `HANDOVER_인수인계.md`, `static/` **을 제외한** 나머지입니다.
-> 즉 **이 인수인계 문서와 `.gitignore`는 아직 리포에 커밋되어 있지 않습니다.**
-> → 다음 on-computer 세션에서 `.gitignore`와 `HANDOVER_인수인계.md`를 커밋할 것(할 일 T0).
+> **★ 리포 추적 상태(2026-07-26 갱신):** T0 완료 — `.gitignore`, `HANDOVER_인수인계.md` 커밋됨(`17b6602`).
+> `static/`은 여전히 리포에 없으며 앱 동작에도 불필요(Drive 사본에만 존재).
 
 ---
 
@@ -165,14 +169,17 @@ HANDOVER_인수인계.md        (이 문서)
   §11을 "클라우드 세션 + 로컬 폴더 쓰기 권한" 워크플로로 교체. CRLF/LF 비교 주의사항 추가.
   로컬 작업트리(`C:\Users\yun76\Documents\GitHub\crmln_web`)가 GitHub main `231ea36`과 **내용 동일**(줄바꿈 차이만) 확인.
   T0 착수: `.gitignore`, `HANDOVER_인수인계.md`를 리포 폴더에 배치.
+- **v10 (2026-07-26): T0 + T4 완료.** `.gitignore`·`HANDOVER` 커밋(`17b6602`), `tools/` 스모크 검증 세트 추가(66검사 통과).
+  검증 중 확인된 사실: `/review`·`/rounds/add` 모두 헤더 latin-1 안전, canon_label 정상,
+  ⑥탭 Chart.js 4개 캔버스 정상 렌더, 콘솔 에러 없음. **현재 코드에서 재발 버그 없음.**
 
 ## 10. 다음 작업 계획 (2026-07-26 사용자 확정 · 우선순위 순)
 
 > 아래 T0–T4는 **사용자가 직접 선택한 다음 작업 목록**입니다. on-computer 세션에서 위에서부터 진행하고,
 > 각 항목 완료 시 §9 변경 이력에 추가한 뒤 커밋·푸시하세요.
 
-- **T0. 리포 위생 (선착)** — `.gitignore`, `HANDOVER_인수인계.md`를 리포에 커밋(§2 확인 결과 누락 상태).
-  이후 이 문서의 단일 원본은 GitHub 리포가 됩니다.
+- ~~**T0. 리포 위생**~~ — **완료(2026-07-26, `17b6602`).** `.gitignore` + `HANDOVER_인수인계.md` 커밋.
+  이 문서의 단일 원본은 이제 GitHub 리포입니다.
 - **T1. 과거 회차 소급 누적** — 2023.1–2026.7은 현재 `assets/history_seed.json`의 **경향 시드만** 있고 상세 제출표가 없음.
   과거 측정 원본 엑셀을 업로드하면 `summarize_round`로 상세 제출표까지 소급 누적되도록 지원.
   · 회차 라벨은 파일명/시트명에서 추정하되 **반드시 사용자 확인 후 확정**(자동 추정만으로 저장 금지).
@@ -184,10 +191,14 @@ HANDOVER_인수인계.md        (이 문서)
 - **T3. Drive `crmln-app` 사본 최신화** — Google Drive `…\CRMLN\crmln-app` 은 **v8 시점 스냅샷**(`rounds.py`에 `canon_label` 없음,
   `app.py`에 `is_admin` 주입·`ajax` 분기 없음, `private/dashboard.html` 구버전). GitHub main(v9)으로 동기화하거나,
   혼동 방지를 위해 사본을 폐기하고 리포 단일 원본만 유지할지 결정할 것. (§12 참조)
-- **T4. 검증 스모크 정비** — 재발 버그 방지용 스크립트를 리포에 추가.
-  · `tools/smoke_gunicorn.sh`: 실제 gunicorn 기동 후 `/healthz`, 업로드 응답 헤더 latin-1 검증(한글 헤더 500 재발 방지).
-  · `tools/smoke_tab6.py`: Chart.js 로컬 vendoring + Playwright headless로 ⑥ 탭 캔버스/표 행수 확인.
-  · CI 없이도 `python -m pytest` 또는 셸 한 줄로 돌아가게 할 것.
+- ~~**T4. 검증 스모크 정비**~~ — **완료(2026-07-26).** `tools/` 4개 스크립트 + README 추가, 총 **66개 검사 전부 통과**.
+  · `tools/smoke_headers.py` (41) — 헤더 latin-1 안전성을 **직접 인코딩해 검사**하므로 Windows/개발서버에서도 동일 버그를 잡음.
+    부가로 canon_label 6종, 중복 회차 병합, `/rounds/data`의 `is_admin`, 삭제 ajax, 잘못된 입력 400까지 검증.
+  · `tools/smoke_gunicorn.sh` (14) — 실제 gunicorn 위에서 한글 파일명 업로드 → 200 + 헤더 latin-1 재확인.
+  · `tools/smoke_tab6.py` (11) — Playwright headless. Chart.js 4개 캔버스 **픽셀 검사**(빈 캔버스면 실패),
+    제출표 행/회차 서브탭/관리자 삭제표/콘솔 에러 확인.
+  · `tools/make_fixture.py` — 합성 측정지 생성. ⚠️ **가짜 데이터**이므로 판정·제출 금지(README에 경고 명시).
+  · **배포 전 습관:** `python tools/smoke_headers.py && bash tools/smoke_gunicorn.sh && python tools/smoke_tab6.py`
 
 ### 진행 중/기타
 - 중복 회차 라벨(2026-07 / 2026.07 / 2026-07-01) 정리는 사용자가 ⑥ 탭 삭제표에서 수행, `2026.7`만 유지.

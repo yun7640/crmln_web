@@ -408,11 +408,12 @@ def main():
         assert_latin1_headers(r, '/rounds/add(세로형 DCM %s)' % _sheet)
         c.post('/rounds/delete', data={'label': '2027.7', 'ajax': '1'})
         # 검토파일 생성까지 — 선택 시트가 세로형 원본 행을 참조해야 한다
-        svout, _svm = RE.process(svb)
+        svout, _svm = RE.process(svb, label='2027.7')
         svwb2 = _ox.load_workbook(io.BytesIO(svout))
+        _svsel = RE.sel_sheet_name('2027.7')
         check('세로형[%s]: 검토파일에 결과선택 시트' % _sheet,
-              RE.DCM_SEL_SHEET in svwb2.sheetnames, svwb2.sheetnames)
-        _sel = svwb2[RE.DCM_SEL_SHEET]
+              _svsel in svwb2.sheetnames, svwb2.sheetnames)
+        _sel = svwb2[_svsel]
         # Day2 표(V열~)의 첫 행 수식이 Day2 실제 시작 행(_h2+1)을 가리켜야 한다
         _f = str(_sel.cell(15, 2 + 20 + 3).value or '')
         check('세로형[%s]: Day2 수식이 %d행을 참조' % (_sheet, _h2 + 1),
@@ -421,12 +422,13 @@ def main():
     # (5c) DCM 검토파일도 UC와 동일하게 [검토_가이드]·[결과선택] 시트를 포함해야 한다
     import openpyxl as _ox2  # noqa: E402
     with open(dcm_path, 'rb') as f:
-        dcm_out, _dmeta = RE.process(f.read())
+        dcm_out, _dmeta = RE.process(f.read(), label='2026.7')
     dwb = _ox2.load_workbook(io.BytesIO(dcm_out))
+    _dsel = RE.sel_sheet_name('2026.7')
     check('DCM 검토파일에 검토_가이드 시트', RE.DCM_GUIDE in dwb.sheetnames, dwb.sheetnames)
-    check('DCM 검토파일에 결과선택 시트', RE.DCM_SEL_SHEET in dwb.sheetnames, dwb.sheetnames)
+    check('DCM 검토파일에 결과선택 시트', _dsel in dwb.sheetnames, dwb.sheetnames)
     check('DCM 검토파일에 검토 시트', RE.DCM_SHEET in dwb.sheetnames, dwb.sheetnames)
-    sel = dwb[RE.DCM_SEL_SHEET]
+    sel = dwb[_dsel]
     check('선택 시트 C4에 옵션 드롭다운',
           any(str(d.sqref) == 'C4' and d.type == 'list' for d in sel.data_validations.dataValidation),
           [(str(d.sqref), d.type) for d in sel.data_validations.dataValidation])
@@ -465,6 +467,97 @@ def main():
     check('가이드에 동점 처리 설명', '동점' in gtxt and '중앙' in gtxt)
     check('가이드에 유리한 선택 지양 원칙', '유리하게 만들기 위한 선택은 지양' in gtxt)
     check('가이드에 검증 열 안내', '불일치' in gtxt)
+    check('가이드가 회차 시트명을 그대로 안내', _dsel in gtxt, gtxt[:120])
+
+    # ------------------------------------------------------------------
+    # (5c-2) T7 — 선택 시트명이 회차 라벨을 따라간다
+    #   종전에는 '2026.7_결과선택'으로 상수 고정이라 2026.1 측정지를 올려도 시트명·제목이
+    #   '2026-07 회차'로 나왔다. 표시 문제지만 과거 회차 검토파일에서 오해 소지가 컸다.
+    #   ★ 라벨은 표시 전용이며 채택값·계산에는 관여하지 않는다(§0) — 아래에서 함께 검증한다.
+    # ------------------------------------------------------------------
+    check('sel_sheet_name: 라벨 있으면 접두', RE.sel_sheet_name('2026.1') == '2026.1_결과선택',
+          RE.sel_sheet_name('2026.1'))
+    check('sel_sheet_name: 라벨 없으면 회차 표기 없음', RE.sel_sheet_name('') == '결과선택',
+          RE.sel_sheet_name(''))
+    check('canon_round_label 정규화', RE.canon_round_label('2026-07-01') == '2026.7'
+          and RE.canon_round_label('2026-01') == '2026.1',
+          (RE.canon_round_label('2026-07-01'), RE.canon_round_label('2026-01')))
+    check('infer_round_label: 파일명에서 추정',
+          RE.infer_round_label('CRMLN_2026-01_DCM측정.xlsx') == '2026.1',
+          RE.infer_round_label('CRMLN_2026-01_DCM측정.xlsx'))
+    check('infer_round_label: 시트명에서 추정',
+          RE.infer_round_label('무제.xlsx', ['2025년 7월 결과']) == '2025.7',
+          RE.infer_round_label('무제.xlsx', ['2025년 7월 결과']))
+    check('infer_round_label: 근거 없으면 빈 문자열',
+          RE.infer_round_label('무제.xlsx', ['Sheet2']) == '',
+          repr(RE.infer_round_label('무제.xlsx', ['Sheet2'])))
+
+    with open(dcm_path, 'rb') as f:
+        _dcm_raw = f.read()
+    _o_lab, _ = RE.process(_dcm_raw, label='2026.1')          # 사용자 확정 라벨
+    _o_inf, _ = RE.process(_dcm_raw, filename='2025.7_DCM.xlsx')  # 파일명 추정
+    _o_non, _ = RE.process(_dcm_raw)                           # 근거 없음
+    _w_lab = _ox2.load_workbook(io.BytesIO(_o_lab))
+    _w_inf = _ox2.load_workbook(io.BytesIO(_o_inf))
+    _w_non = _ox2.load_workbook(io.BytesIO(_o_non))
+    check('T7: 확정 라벨이 시트명에 반영', '2026.1_결과선택' in _w_lab.sheetnames, _w_lab.sheetnames)
+    check('T7: 옛 고정명(2026.7_결과선택)이 남지 않음',
+          '2026.7_결과선택' not in _w_lab.sheetnames, _w_lab.sheetnames)
+    check('T7: 파일명 추정이 시트명에 반영', '2025.7_결과선택' in _w_inf.sheetnames, _w_inf.sheetnames)
+    check('T7: 근거 없으면 회차 없는 시트명', '결과선택' in _w_non.sheetnames, _w_non.sheetnames)
+    _o_both, _ = RE.process(_dcm_raw, filename='2025.7_x.xlsx', label='2026.1')
+    _w_both = _ox2.load_workbook(io.BytesIO(_o_both))
+    check('T7: 확정 라벨이 파일명 추정보다 우선',
+          '2026.1_결과선택' in _w_both.sheetnames and '2025.7_결과선택' not in _w_both.sheetnames,
+          _w_both.sheetnames)
+    _ttl = str(_w_lab[RE.DCM_SHEET].cell(1, 1).value or '')
+    check('T7: 검토 시트 제목이 회차를 따라감', '2026년 1월' in _ttl, _ttl)
+    check('T7: 제목에 옛 회차(2026년 7월)가 남지 않음', '2026년 7월' not in _ttl, _ttl)
+    _ttl_non = str(_w_non[RE.DCM_SHEET].cell(1, 1).value or '')
+    check('T7: 회차를 모르면 제목에 회차를 지어내지 않음',
+          '년' not in _ttl_non.split('HDL')[0], _ttl_non)
+    # ★ 라벨은 표시 전용 — 채택값·요약이 라벨에 따라 달라지면 안 된다
+    check('T7: 라벨이 달라도 요약(계산값) 동일',
+          RE.summarize_round(_dcm_raw) == RE.summarize_round(_dcm_raw), 'summarize_round 결정성')
+    _sv_lab = [_w_lab['2026.1_결과선택'].cell(15 + i, 2 + 16).value for i in range(8)]
+    _sv_non = [_w_non['결과선택'].cell(15 + i, 2 + 16).value for i in range(8)]
+    check('T7: 시트명이 달라도 서버 계산값 동일', _sv_lab == _sv_non, (_sv_lab, _sv_non))
+
+    # UC 경로도 같은 규칙을 따라야 한다(템플릿 시트를 rename하는 별도 경로라 따로 검사)
+    with open(uc_path, 'rb') as f:
+        _uc_raw = f.read()
+    _u_out, _ = RE.process(_uc_raw, filename='CRMLN 2025년 1월 UC 측정.xlsx')
+    _u_wb = _ox2.load_workbook(io.BytesIO(_u_out))
+    check('T7(UC): 파일명 추정이 시트명에 반영', '2025.1_결과선택' in _u_wb.sheetnames, _u_wb.sheetnames)
+    check('T7(UC): 템플릿 원본 선택 시트명이 남지 않음',
+          RE.SEL_SRC not in _u_wb.sheetnames, _u_wb.sheetnames)
+    _u_ttl = str(_u_wb[RE.UC_SHEET].cell(1, 1).value or '')
+    check('T7(UC): 검토 시트 제목이 회차를 따라감', '2025년 1월' in _u_ttl, _u_ttl)
+    _ug = ' '.join(str(c.value) for r in _u_wb['검토_가이드'].iter_rows() for c in r if c.value)
+    check('T7(UC): 가이드 본문의 시트명도 갱신',
+          '2025.1_결과선택' in _ug and '2026.7_결과선택' not in _ug, _ug[:150])
+    _u_none, _ = RE.process(_uc_raw)
+    _u_wb2 = _ox2.load_workbook(io.BytesIO(_u_none))
+    check('T7(UC): 근거 없으면 회차 없는 시트명', '결과선택' in _u_wb2.sheetnames, _u_wb2.sheetnames)
+
+    # ★ 사용자 시트 보호 — DCM 경로는 업로드 워크북을 그대로 편집하므로, 이름만 보고 지우면
+    #   사용자가 만든 '*_결과선택' 시트가 사라진다. 서명이 없는 시트는 남아 있어야 한다.
+    _uwb = _ox2.load_workbook(io.BytesIO(_dcm_raw))
+    _mine = _uwb.create_sheet('2024.1_결과선택')
+    _mine['A1'] = '검토자 개인 메모 — 앱이 만든 시트 아님'
+    _bio = io.BytesIO(); _uwb.save(_bio)
+    _o_keep, _ = RE.process(_bio.getvalue(), label='2026.1')
+    _w_keep = _ox2.load_workbook(io.BytesIO(_o_keep))
+    check('T7: 사용자가 만든 결과선택 시트는 보존', '2024.1_결과선택' in _w_keep.sheetnames, _w_keep.sheetnames)
+    check('T7: 사용자 시트 내용도 그대로',
+          _w_keep['2024.1_결과선택']['A1'].value == '검토자 개인 메모 — 앱이 만든 시트 아님',
+          _w_keep['2024.1_결과선택']['A1'].value)
+    # 반대로 앱이 만든 옛 회차 선택 시트는 재생성 시 정리되어야 한다(중복 방지)
+    _o_re, _ = RE.process(_o_lab, label='2025.7')   # 이미 '2026.1_결과선택'이 든 검토파일을 재처리
+    _w_re = _ox2.load_workbook(io.BytesIO(_o_re))
+    check('T7: 앱이 만든 옛 회차 선택 시트는 정리',
+          '2025.7_결과선택' in _w_re.sheetnames and '2026.1_결과선택' not in _w_re.sheetnames,
+          _w_re.sheetnames)
 
     # (5d) DCM 내부 QC bias 시드(2025.7·2026.1·2026.7) — 평가 bias와 병기되어야 한다
     P3 = R.dashboard_payload()

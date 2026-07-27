@@ -85,7 +85,8 @@ def review():
     if not f or not f.filename.lower().endswith(('.xlsx', '.xlsm')):
         return {'error': '.xlsx 측정 파일을 첨부하세요.'}, 400
     try:
-        out_bytes, summary = review_engine.process(f.read())
+        # 회차 라벨은 파일명·시트명에서 추정한다(출력 시트명·제목 표기용, T7).
+        out_bytes, summary = review_engine.process(f.read(), filename=f.filename)
     except ValueError as e:
         return {'error': str(e)}, 400
     except Exception as e:
@@ -221,7 +222,9 @@ def rounds_add():
         }, ensure_ascii=False), mimetype='application/json')
     # 제출 검토 파일도 함께 생성해 반환
     try:
-        out_bytes, rsum = review_engine.process(data)
+        # 여기서는 사용자가 확정한 라벨이 있으므로 추정하지 않고 그대로 쓴다(T7).
+        out_bytes, rsum = review_engine.process(
+            data, filename=f.filename, label=rounds.canon_label(label))
     except Exception:
         # 저장은 되었으니 파일 생성 실패해도 상태는 알림
         return {'stored': True, 'label': label, 'mode': summary['mode'],

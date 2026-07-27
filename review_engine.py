@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 """CRMLN 측정 엑셀 업로드 → 검토 파일 생성.
 전략: 사용자 검토 템플릿(assets/select_template.xlsx)에 업로드 측정값을 '주입'하여
-동적 선택 시트(제출결과_선택검토 → 2026.7_결과선택; 수식·조건부서식·드롭다운 100% 보존)를
-그대로 재현하고, 정적 요약 시트(2026.7 측정결과 검토)를 추가한다."""
+동적 선택 시트(제출결과_선택검토 → <회차>_결과선택; 수식·조건부서식·드롭다운 100% 보존)를
+그대로 재현하고, 정적 요약 시트(HDLC UC 검토 / HDLC DCM 검토)를 추가한다.
+
+★ 출력 시트명·제목의 회차 표기는 **하드코딩하지 않는다**(T7). 사용자가 확정한 라벨이 있으면
+  그것을 쓰고, 없으면 파일명·시트명에서 추정하며, 추정도 실패하면 회차 없이 '결과선택'으로 만든다.
+  2026.1 측정지를 올렸는데 시트명이 '2026.7_결과선택'으로 나오던 오해 소지를 없애기 위함이다."""
 import io, os, re, openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -34,11 +38,109 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE = os.path.join(BASE, 'assets', 'select_template.xlsx')
 TMPL_MS = '2026-07_결과정리'          # 템플릿 측정 시트명
 SEL_SRC = '제출결과_선택검토'          # 템플릿 선택 시트명
-SEL_DST = '2026.7_결과선택'           # 출력 선택 시트명
+SEL_BASE = '결과선택'                 # 출력 선택 시트명 접미(앞에 회차 라벨이 붙는다)
+# 구버전 검토파일이 남긴 시트명 — 재생성 시 지우기 위한 목록. 새로 만들지는 않는다.
+LEGACY_SEL_NAMES = ('2026.7_결과선택', '2026.7 측정결과 검토')
 DEFAULT_OPTION = '종합 (BF+HDL 상대편차) · 균형 [기본]'
 UC_SHEET = 'HDLC UC 검토'      # (구)2026.7 측정결과 검토 — HDL-C UC / β-정량 검토
 DCM_SHEET = 'HDLC DCM 검토'    # HDL-C DCM 검토
 DCM_HDL_LIM = 1.0             # CRMLN member: HDL-C DCM bias ±1.0 mg/dL, imprecision SD ≤1.0 mg/dL (PS0126 참조)
+
+
+# ============================================================
+#  회차 라벨 → 출력 시트명·제목 (T7)
+#  ★ 우선순위: ① 사용자가 확정한 라벨  ② 파일명·시트명 추정  ③ 회차 표기 없음
+#    추정은 **표시 목적에만** 쓰인다. 계산값·채택 로직에는 일절 관여하지 않는다(§0).
+# ============================================================
+_RE_SEL_SHEET = re.compile(r'^(.*_)?%s$' % re.escape('결과선택'))
+
+
+def canon_round_label(label):
+    """'2026-07'·'2026.07'·'2026-07-01' → '2026.7' (rounds.canon_label과 동일 규칙).
+
+    rounds 모듈을 가져올 수 있으면 그 구현을 그대로 쓴다(규칙이 갈라지지 않도록).
+    가져올 수 없는 환경(단독 실행·테스트)에서는 같은 정규식으로 폴백한다."""
+    s = str(label or '').strip()
+    if not s:
+        return ''
+    try:
+        import rounds
+        return rounds.canon_label(s)
+    except Exception:
+        m = re.match(r'^(\d{4})\s*[.\-/]\s*(\d{1,2})', s)
+        if not m:
+            return s
+        return '%d.%d' % (int(m.group(1)), 7 if int(m.group(2)) >= 7 else 1)
+
+
+def infer_round_label(filename='', sheetnames=None):
+    """파일명·시트명에서 회차 라벨을 추정한다. 실패하면 빈 문자열.
+
+    ⚠️ 이 추정은 **시트명·제목 표기용**이다. 누적 저장(/rounds/add)은 여전히 사용자가
+      확정한 라벨만 쓴다(§10 T1). 근거가 가장 많은 후보를 고르고, 동수면 파일명 쪽을
+      우선한다(rounds.infer_labels가 파일명 후보를 앞에 둔다)."""
+    try:
+        import rounds
+        cands = rounds.infer_labels(filename or '', list(sheetnames or []))
+    except Exception:
+        return ''
+    if not cands:
+        return ''
+    best = max(cands, key=lambda c: c.get('n_sources', 1))
+    return best.get('label', '') or ''
+
+
+def sel_sheet_name(label=''):
+    """선택 시트명 — '2026.7_결과선택'. 회차를 모르면 '결과선택'.
+
+    엑셀 시트명은 31자 제한이 있으나 'YYYY.M_결과선택'은 최대 12자라 여유가 있다."""
+    lab = str(label or '').strip()
+    return ('%s_%s' % (lab, SEL_BASE)) if lab else SEL_BASE
+
+
+def round_title(label=''):
+    """제목용 회차 표기 — '2026.7' → '2026년 7월'. 모르면 빈 문자열."""
+    m = re.match(r'^(\d{4})\.(\d{1,2})$', str(label or '').strip())
+    return ('%s년 %d월' % (m.group(1), int(m.group(2)))) if m else ''
+
+
+def _round_suffix(label='', prefix=' ', fallback=''):
+    """제목에 덧붙일 회차 문구. 회차를 모르면 fallback(기본: 아무것도 안 붙임)."""
+    t = round_title(label)
+    return (prefix + t) if t else fallback
+
+
+def _looks_generated_sel(ws, sign):
+    """이 시트가 **앱이 만든** 선택 시트인지 상단 서명 문구로 확인.
+
+    ★ DCM 경로는 사용자가 올린 워크북을 그대로 편집한다. 이름만 보고 지우면
+      사용자가 직접 만든 '결과선택' 시트를 없앨 수 있으므로(자료 손실) 서명을 확인한다."""
+    if not sign:
+        return True
+    for row in ws.iter_rows(min_row=1, max_row=3):
+        for c in row:
+            if isinstance(c.value, str) and sign in c.value:
+                return True
+    return False
+
+
+def _drop_sel_sheets(wb, keep=(), sign=None, target=None):
+    """이 워크북에 남아 있는 **앱이 만든** 선택 시트('*_결과선택'·구 이름)를 지운다.
+
+    회차마다 시트명이 달라지므로 상수 하나만 지우면 **옛 회차 시트가 남는다.**
+    패턴으로 모으되, sign이 주어지면 서명이 있는 시트만 지운다(사용자 시트 보호).
+    target(이번에 새로 만들 이름)은 어차피 덮어써야 하므로 서명과 무관하게 지운다."""
+    for nm in list(wb.sheetnames):
+        if nm in keep:
+            continue
+        if nm == target:
+            del wb[nm]
+            continue
+        if not (_RE_SEL_SHEET.match(nm) or nm in LEGACY_SEL_NAMES):
+            continue
+        if not _looks_generated_sel(wb[nm], sign):
+            continue
+        del wb[nm]
 
 
 def _num(v):
@@ -148,16 +250,20 @@ def _inject(src_ws, dst_ws, force=False):
     return n
 
 
-def process(in_bytes):
-    """입력 xlsx 바이트 → (출력 xlsx 바이트, 요약 dict)."""
+def process(in_bytes, filename='', label=''):
+    """입력 xlsx 바이트 → (출력 xlsx 바이트, 요약 dict).
+
+    label — 사용자가 확정한 회차 라벨(예: '2026.1'). 주면 시트명·제목에 그대로 쓴다.
+            비어 있으면 filename·시트명에서 추정하고, 추정도 실패하면 회차 표기를 뺀다."""
     up = openpyxl.load_workbook(io.BytesIO(in_bytes))
     up_do = openpyxl.load_workbook(io.BytesIO(in_bytes), data_only=True)
     ms_name = find_ms_sheet(up)
     if ms_name is None:
         raise ValueError(MS_NOT_FOUND_MSG)
+    lab = canon_round_label(label) or infer_round_label(filename, up.sheetnames)
     up_ms = up[ms_name]
     if _is_dcm(up_ms):
-        return _process_dcm(up, up_ms)
+        return _process_dcm(up, up_ms, label=lab)
     rows, qc = _parse(up_ms)
     if not rows:
         raise ValueError("CS 검체(BF/HDL/LDL Sample) 데이터를 찾지 못했습니다. 레이아웃을 확인하세요.")
@@ -173,14 +279,16 @@ def process(in_bytes):
         if sn in up_do.sheetnames and sn in wb.sheetnames:
             _inject(up_do[sn], wb[sn], force=True)
 
-    # 2) 선택 시트: 기본 옵션으로 초기화 후 이름 변경
+    # 2) 선택 시트: 기본 옵션으로 초기화 후 이름 변경(회차 라벨 반영)
+    sel_name = sel_sheet_name(lab)
+    _drop_sel_sheets(wb, keep=(SEL_SRC,))
     if SEL_SRC in wb.sheetnames:
         sel = wb[SEL_SRC]
         try:
             sel['C4'] = DEFAULT_OPTION
         except Exception:
             pass
-        sel.title = SEL_DST
+        sel.title = sel_name
 
     # 3) 가이드 시트 텍스트의 옛 시트명 갱신
     if '검토_가이드' in wb.sheetnames:
@@ -188,10 +296,10 @@ def process(in_bytes):
         for row in g.iter_rows():
             for c in row:
                 if isinstance(c.value, str) and SEL_SRC in c.value:
-                    c.value = c.value.replace(SEL_SRC, SEL_DST)
+                    c.value = c.value.replace(SEL_SRC, sel_name)
 
     # 4) 정적 요약 시트 추가
-    _build_review_sheet(wb, samples, qc)
+    _build_review_sheet(wb, samples, qc, label=lab, sel_name=sel_name)
 
     # 5) Excel 열 때 자동 재계산
     try:
@@ -201,7 +309,7 @@ def process(in_bytes):
 
     # 6) 시트 순서
     order = ['검토_가이드', 'RESULT(Conc)_DAY1', 'RESULT(Conc)_DAY2',
-             TMPL_MS, SEL_DST, UC_SHEET]
+             TMPL_MS, sel_name, UC_SHEET]
     wb._sheets.sort(key=lambda s: order.index(s.title) if s.title in order else 999)
 
     out = io.BytesIO(); wb.save(out); out.seek(0)
@@ -210,7 +318,8 @@ def process(in_bytes):
     return out.read(), summary
 
 
-def _build_review_sheet(wb, samples, qc):
+def _build_review_sheet(wb, samples, qc, label='', sel_name=None):
+    sel_name = sel_name or sel_sheet_name(label)
     if UC_SHEET in wb.sheetnames:
         del wb[UC_SHEET]
     ws = wb.create_sheet(UC_SHEET)
@@ -228,7 +337,8 @@ def _build_review_sheet(wb, samples, qc):
         ws.merge_cells(start_row=r, start_column=c1, end_row=r, end_column=c2); return C(r, c1, v, **k)
 
     NC = 8; R = 1
-    M(R, 1, NC, 'CRMLN 2026년 7월 HDL-C UC 측정결과 검토', bold=True, size=15, color='FFFFFF', fill=NAVY, align='center'); ws.row_dimensions[R].height = 26; R += 1
+    M(R, 1, NC, 'CRMLN%s HDL-C UC 측정결과 검토' % _round_suffix(label),
+      bold=True, size=15, color='FFFFFF', fill=NAVY, align='center'); ws.row_dimensions[R].height = 26; R += 1
     M(R, 1, NC, 'KDCA 진단검사의학 표준검사실(NMRL) · CRMLN member laboratory (Lab 509) · HDL-C / LDL-C(β-quantification)', size=10, color='FFFFFF', fill=BLUE, align='center'); R += 2
 
     def section(t, sub=''):
@@ -259,7 +369,7 @@ def _build_review_sheet(wb, samples, qc):
 
     # ② 제출 선택 (종합·균형)
     section('② CRMLN 제출 결과 선택 (CS 검체 R1/R2/R3 → 채택 2반복, 기본: 종합 BF+HDL 균형)',
-            '동적 선택·옵션 비교는 [2026.7_결과선택] 시트 참조. QC/Control 미제출 · BF·HDL·LDL 동일 R index 잠금.')
+            '동적 선택·옵션 비교는 [%s] 시트 참조. QC/Control 미제출 · BF·HDL·LDL 동일 R index 잠금.' % sel_name)
     for i, t in enumerate(['검체', 'Day', '제외R', '채택R', 'BF채택', 'HDL채택', 'LDL채택', 'LDL cv%']):
         C(R, i + 1, t, bold=True, size=9.5, color='FFFFFF', fill=NAVY, align='center', border=True)
     R += 1
@@ -286,7 +396,7 @@ def _build_review_sheet(wb, samples, qc):
         '· CS 검체는 정밀도 기반(median 이상치 제외)으로 2반복 채택 → 제출(QC·Control 미제출).',
         '· QC·Control member 기준 초과 항목: %s.' % exc_txt,
         '· 제출값은 CDC 참조법 회신 전 잠정이며, 최종 판정은 검토자 확인 후 확정.',
-        '· 선택 기준을 바꿔 비교하려면 [2026.7_결과선택] 시트의 C4 옵션(드롭다운)을 사용하십시오.',
+        '· 선택 기준을 바꿔 비교하려면 [%s] 시트의 C4 옵션(드롭다운)을 사용하십시오.' % sel_name,
     ]:
         M(R, 1, NC, t, size=10, wrap=True, color='333333'); R += 1
     M(R, 1, NC, '※ 본 시트는 업로드 파일로부터 자동 생성됨. 공식 CRMLN 인증 판정은 CDC 평가보고서(PS)에 따름.', size=8.5, color='888888', italic=True); R += 1
@@ -555,27 +665,31 @@ def _extract_dcm_rows(ws):
                                  mean3=mean_n, cv3=_cvn(reps)))
     return out
 
-def _process_dcm(up, ms):
+def _process_dcm(up, ms, label=''):
     qc, samples = _parse_dcm(ms)
     rows = _extract_dcm_rows(ms)
     if not samples:
         raise ValueError('HDL-C DCM 검체(CS01–CS04)를 찾지 못했습니다. DCM 측정지 형식(5–12행)을 확인하세요.')
-    for nm in (DCM_SEL_SHEET, '2026.7 측정결과 검토', UC_SHEET, DCM_GUIDE):
+    sel_name = sel_sheet_name(label)
+    # ★ 선택 시트명은 회차마다 다르므로 상수 하나만 지우면 옛 회차 시트가 남는다 → 패턴으로 정리.
+    #   단, 여기서는 **사용자 워크북**을 편집하므로 서명이 있는(= 앱이 만든) 시트만 지운다.
+    _drop_sel_sheets(up, sign=DCM_SEL_SIGN, target=sel_name)
+    for nm in (UC_SHEET, DCM_GUIDE):
         if nm in up.sheetnames:
             del up[nm]
     ms_title = ms.title
-    _build_dcm_review(up, qc, samples, rows)
+    _build_dcm_review(up, qc, samples, rows, label=label)
     # UC 검토파일과 동일하게 가이드·동적 선택 시트도 함께 생성한다.
     try:
-        _build_dcm_select(up, ms, qc, rows, ms_title=ms_title)
+        _build_dcm_select(up, ms, qc, rows, ms_title=ms_title, label=label, sel_name=sel_name)
     except Exception:
         pass          # 선택 시트 생성 실패가 검토 파일 전체를 막지 않도록
-    _build_dcm_guide(up, ms_title=ms_title)
+    _build_dcm_guide(up, ms_title=ms_title, sel_name=sel_name)
     # 순서: 측정/RESULT 뒤에 검토 시트
     # ★ 시트명은 회차마다 다르다(결과정리 / 결과 취합 / Sheet2, RESULT(Conc)_DAY1 / _day1).
     #   대소문자를 무시하고 비교하며, 실제 측정 시트명(ms_title)을 목록에 넣는다.
     order = [DCM_GUIDE, 'RESULT(CONC)_DAY1', 'RESULT(CONC)_DAY2', ms_title.upper(),
-             '결과정리', TMPL_MS.upper(), DCM_SEL_SHEET, DCM_SHEET]
+             '결과정리', TMPL_MS.upper(), sel_name, DCM_SHEET]
     def _rank(s):
         t = s.title.upper() if s.title.upper() in [o.upper() for o in order] else None
         return [o.upper() for o in order].index(t) if t else 500
@@ -590,8 +704,9 @@ def _process_dcm(up, ms):
     return out.read(), {'mode': 'dcm', 'samples': len(samples), 'qc_rows': len(qc),
                         'member_exceed': n_exc, 'days': days}
 
-DCM_SEL_SHEET = '2026.7_결과선택'      # DCM 출력 선택 시트명(UC와 동일 명명)
 DCM_GUIDE = '검토_가이드'
+# 선택 시트 1행에 적히는 서명 — 재생성 시 '앱이 만든 시트'를 식별하는 근거다(사용자 시트 보호).
+DCM_SEL_SIGN = 'CRMLN 제출 결과 선택 검토'
 DCM_OPTIONS = [
     ('정밀도 (median 이상치 제외) · 기본', 'SCORE'),
     ('최소분산쌍 (인접 최소간격)', 'PAIR'),
@@ -608,8 +723,8 @@ DCM_DEFAULT_OPTION = DCM_OPTIONS[0][0]
 H_DCM_SEL = (44, 60, 15, 90)
 
 
-def _build_dcm_select(wb, ms, qc, rows, ms_title='결과정리'):
-    """HDL-C DCM 동적 선택 시트 — UC의 [2026.7_결과선택]과 동일한 방식.
+def _build_dcm_select(wb, ms, qc, rows, ms_title='결과정리', label='', sel_name=None):
+    """HDL-C DCM 동적 선택 시트 — UC의 [<회차>_결과선택]과 동일한 방식.
 
     · 측정 시트(결과정리)를 참조하는 **수식 기반**이므로 측정값을 바꾸면 즉시 재계산된다.
     · C4 드롭다운으로 선택 옵션을 바꾸면 채택 셀(노란색)·제외 셀(회색)·평균·CV가 재계산된다.
@@ -617,9 +732,10 @@ def _build_dcm_select(wb, ms, qc, rows, ms_title='결과정리'):
       함께 적어 두고 **'검증' 열에서 자동 대조**한다(불일치 시 빨강 '불일치'). §0 원칙상
       어떤 옵션도 결과를 유리하게 만들기 위해 쓰지 않는다.
     """
-    if DCM_SEL_SHEET in wb.sheetnames:
-        del wb[DCM_SEL_SHEET]
-    ws = wb.create_sheet(DCM_SEL_SHEET)
+    sel_name = sel_name or sel_sheet_name(label)
+    if sel_name in wb.sheetnames:
+        del wb[sel_name]
+    ws = wb.create_sheet(sel_name)
     L = get_column_letter
     SRC = "'%s'" % ms_title
     DAY = _dcm_day_cols(ms)
@@ -663,7 +779,8 @@ def _build_dcm_select(wb, ms, qc, rows, ms_title='결과정리'):
         return base + (0 if day == 1 else OFF)
 
     # ── 헤더 블록 ───────────────────────────────────────────────────
-    M(1, B0, B0 + NCOL - 1, 'CRMLN 제출 결과 선택 검토 — HDL-C DCM (2026-07 회차)',
+    M(1, B0, B0 + NCOL - 1,
+      'CRMLN 제출 결과 선택 검토 — HDL-C DCM%s' % _round_suffix(label, prefix=' · ', fallback=''),
       bold=True, size=15, color='FFFFFF', fill=NAVY, align='center')
     ws.row_dimensions[1].height = 26
     M(2, B0, B0 + NCOL - 1,
@@ -1026,7 +1143,8 @@ def _dcm_sel_format(ws, B0, OFF, NCOL, R0, NROWS, H1, H2, HW, OPT_C, L):
     ws.freeze_panes = ws.cell(R0, B0)
 
 
-def _build_dcm_guide(wb, ms_title='결과정리'):
+def _build_dcm_guide(wb, ms_title='결과정리', sel_name=None, label=''):
+    sel_name = sel_name or sel_sheet_name(label)
     """HDL-C DCM 검토 가이드 시트 — UC 템플릿의 [검토_가이드]와 동일한 역할."""
     if DCM_GUIDE in wb.sheetnames:
         del wb[DCM_GUIDE]
@@ -1065,9 +1183,9 @@ def _build_dcm_guide(wb, ms_title='결과정리'):
 
     sec('① 사용 방법 (매 회차)')
     for t in ['1. [%s] 시트의 R 열에 새 회차 측정값을 붙여넣습니다 (CS 검체 R1–R4, QC·Control R1–R3).' % ms_title,
-              '2. CS 검체의 채택 2반복 셀이 [%s] 시트에서 자동으로 노란색, 제외 셀은 회색 취소선으로 표시됩니다.' % DCM_SEL_SHEET,
+              '2. CS 검체의 채택 2반복 셀이 [%s] 시트에서 자동으로 노란색, 제외 셀은 회색 취소선으로 표시됩니다.' % sel_name,
               '3. HDL Control(±1 mg/dL) bias가 기준을 초과하면 해당 셀이 자동으로 빨간색으로 표시됩니다.',
-              '4. 값만 바꾸면 즉시 재계산됩니다(수식·조건부 서식 기반). 선택 기준을 바꿔 비교하려면 [%s] 시트의 선택 옵션(C4)을 사용합니다.' % DCM_SEL_SHEET,
+              '4. 값만 바꾸면 즉시 재계산됩니다(수식·조건부 서식 기반). 선택 기준을 바꿔 비교하려면 [%s] 시트의 선택 옵션(C4)을 사용합니다.' % sel_name,
               '5. Day1·Day2 열 위치는 측정지 헤더행(A.value / R1…Rn)에서 자동으로 찾으므로 반복 수가 바뀌어도 됩니다.']:
         line(t)
     R += 1
@@ -1086,7 +1204,7 @@ def _build_dcm_guide(wb, ms_title='결과정리'):
 
     sec('③ 선택(채택) 로직')
     for t in ['· 각 CS 검체·Day에서 반복 n개(측정지에 채워진 수) 중 n−2개를 제외하고 2개를 채택합니다 (4반복이면 2개 제외).',
-              '· 제외 기준: median 대비 편차가 큰 replicate부터 제외 — 기본(정밀도) 옵션이며 [%s] 시트에서 옵션을 바꿔 비교할 수 있습니다.' % DCM_SEL_SHEET,
+              '· 제외 기준: median 대비 편차가 큰 replicate부터 제외 — 기본(정밀도) 옵션이며 [%s] 시트에서 옵션을 바꿔 비교할 수 있습니다.' % sel_name,
               '· ★ 편차 동점 처리: 같은 값이 중복 측정되면 편차가 동점이 됩니다. 이때는 정렬 순위가 중앙에서 먼 쪽을 먼저 제외합니다.',
               '   그렇게 하지 않으면 동일한 두 값이 채택되어 CV가 0이 되어 정밀도가 실제보다 좋아 보입니다.',
               '· DCM은 HDL-C 단일 항목이므로 UC(β-정량)의 BF·HDL·LDL 동일 R index 잠금은 적용되지 않습니다.',
@@ -1095,7 +1213,7 @@ def _build_dcm_guide(wb, ms_title='결과정리'):
         line(t)
     R += 1
 
-    sec('④ [%s] 시트 — 선택 옵션별 제출결과 검토' % DCM_SEL_SHEET)
+    sec('④ [%s] 시트 — 선택 옵션별 제출결과 검토' % sel_name)
     for t in ['· 목적: [%s] 시트와 동일한 DAY1·DAY2 표 양식으로 선택 결과를 재현하고, 옵션을 바꿔가며 채택값·정밀도를 비교합니다.' % ms_title,
               '· 사용법: [C4] 드롭다운에서 옵션을 고르면 ① 표의 채택 셀(노란색)·제외 셀(회색)·평균·CV와 ② 요약이 즉시 재계산됩니다.',
               "· '수동 지정' 선택 시 부록 ③ 표에서 검체·Day별로 제외할 replicate 2개를 직접 고릅니다.",
@@ -1128,7 +1246,7 @@ def _build_dcm_guide(wb, ms_title='결과정리'):
     return ws
 
 
-def _build_dcm_review(wb, qc, samples, rows=None):
+def _build_dcm_review(wb, qc, samples, rows=None, label=''):
     if DCM_SHEET in wb.sheetnames:
         del wb[DCM_SHEET]
     ws = wb.create_sheet(DCM_SHEET)
@@ -1147,7 +1265,8 @@ def _build_dcm_review(wb, qc, samples, rows=None):
 
     STRIKE = Font(name='맑은 고딕', size=9, color='C0392B', strike=True)
     NC = 8; R = 1
-    M(R, 1, NC, 'CRMLN 2026년 7월 HDL-C DCM 측정결과 검토', bold=True, size=15, color='FFFFFF', fill=NAVY, align='center'); ws.row_dimensions[R].height = 26; R += 1
+    M(R, 1, NC, 'CRMLN%s HDL-C DCM 측정결과 검토' % _round_suffix(label),
+      bold=True, size=15, color='FFFFFF', fill=NAVY, align='center'); ws.row_dimensions[R].height = 26; R += 1
     M(R, 1, NC, 'KDCA 진단검사의학 표준검사실(NMRL) · CRMLN member laboratory (Lab 509) · HDL-C Designated Comparison Method(DCM)', size=10, color='FFFFFF', fill=BLUE, align='center'); R += 2
 
     def section(t, sub=''):

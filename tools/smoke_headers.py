@@ -320,6 +320,24 @@ def main():
     check('구 레이아웃(3반복)도 그대로 탐지', cols2[2]['a'] == 16 and cols2[2]['r'] == [17, 18, 19], cols2[2])
     check('헤더 없으면 종전 하드코딩으로 폴백',
           RE._dcm_day_cols(_ox.Workbook().active)[2]['a'] == 16)
+    # (4b) T5 — 세로형(Day2 stacked) 배열 탐지. 가로형은 row0가 같고, 세로형은 row0가 달라야 한다.
+    check('가로형은 Day1·Day2 row0가 같다', cols[1]['row0'] == cols[2]['row0'] == 5,
+          (cols[1]['row0'], cols[2]['row0']))
+    for _hdr2 in (16, 17, 20):     # Day2 헤더 간격은 회차마다 다르다 — 고정 간격 가정 금지
+        wb3 = _ox.Workbook(); sh3 = wb3.active
+        for _r in (RE.DCM_HEADER_ROW, _hdr2):
+            for _c, _t in [(4, 'A.value'), (5, 'R1'), (6, 'R2'), (7, 'R3'), (8, 'R4')]:
+                sh3.cell(_r, _c, _t)
+        cols3 = RE._dcm_day_blocks(sh3)
+        check('세로형 Day2 탐지(헤더 %d행)' % _hdr2,
+              cols3[2]['row0'] == _hdr2 + 1 and cols3[2]['a'] == 4 and cols3[1]['row0'] == 5,
+              {k: (v['hdr'], v['row0'], v['a']) for k, v in cols3.items()})
+    # Day1만 있는 측정지에서 없는 Day2를 하드코딩으로 지어내면 안 된다(§0)
+    wb4 = _ox.Workbook(); sh4 = wb4.active
+    for _c, _t in [(4, 'A.value'), (5, 'R1'), (6, 'R2'), (7, 'R3')]:
+        sh4.cell(RE.DCM_HEADER_ROW, _c, _t)
+    check('Day1만 있으면 Day2를 추측하지 않음', 2 not in RE._dcm_day_blocks(sh4),
+          list(RE._dcm_day_blocks(sh4)))
     # (5) 요약 결과 구조 — drop이 리스트이고 Day1·Day2가 모두 들어와야 한다
     with open(dcm_path, 'rb') as f:
         sm = RE.summarize_round(f.read())
@@ -358,6 +376,47 @@ def main():
           len(cs04) == 2 and all(x['cv'] > 0 for x in cs04),
           [(x['day'], x['reps'], x['keep'], x['cv']) for x in cs04])
     c.post('/rounds/delete', data={'label': '2027.1', 'ajax': '1'})
+
+    # (5b-2) T5 — 세로형(Day2 stacked) 측정지를 업로드 경로로 end-to-end 검증.
+    #   2025.7(`Sheet2`, Day2 헤더 17행)·2026.1(`결과 취합`, 16행) 실제 배열을 재현한 fixture.
+    #   ★ Day1/Day2 값이 서로 다르므로, 행 하드코딩으로 돌아가면 Day2가 Day1 사본이 되어 여기서 걸린다.
+    for _sheet, _h2, _tag in (('결과 취합', 16, '결과취합'), ('Sheet2', 17, 'Sheet2')):
+        sv = make_fixture.build_dcm_stacked(
+            os.path.join(fx, 'fixture_DCM_세로_%s.xlsx' % _tag), _sheet, _h2)
+        with open(sv, 'rb') as f:
+            svb = f.read()
+        svwb = _ox.load_workbook(io.BytesIO(svb))
+        check('세로형[%s]: 측정 시트 자동 인식' % _sheet,
+              RE.find_ms_sheet(svwb) == _sheet, RE.find_ms_sheet(svwb))
+        check('세로형[%s]: DCM으로 판별' % _sheet, RE._is_dcm(svwb[_sheet]))
+        smv = RE.summarize_round(svb)
+        check('세로형[%s]: Day1·Day2 모두 파싱' % _sheet,
+              {x['day'] for x in smv['samples']} == {1, 2},
+              sorted({x['day'] for x in smv['samples']}))
+        check('세로형[%s]: QC도 Day1·Day2 모두' % _sheet,
+              {q['day'] for q in smv['qc']} == {1, 2}, sorted({q['day'] for q in smv['qc']}))
+        check('세로형[%s]: 검체 4개' % _sheet, smv['n_samples'] == 4, smv['n_samples'])
+        # Day1·Day2 채택값이 전부 같다면 세로 탐색이 실패해 같은 행을 두 번 읽은 것이다.
+        _d1 = {x['name']: x['HDL'] for x in smv['samples'] if x['day'] == 1}
+        _d2 = {x['name']: x['HDL'] for x in smv['samples'] if x['day'] == 2}
+        check('세로형[%s]: Day2가 Day1 사본이 아님' % _sheet,
+              _d1 and _d2 and any(_d1[k] != _d2.get(k) for k in _d1), (_d1, _d2))
+        with open(sv, 'rb') as f:
+            r = c.post('/rounds/add', data={'file': (f, '세로형_DCM.xlsx'), 'label': '2027.7'},
+                       content_type='multipart/form-data')
+        check('세로형[%s]: 업로드 200' % _sheet, r.status_code == 200, r.data[:200])
+        assert_latin1_headers(r, '/rounds/add(세로형 DCM %s)' % _sheet)
+        c.post('/rounds/delete', data={'label': '2027.7', 'ajax': '1'})
+        # 검토파일 생성까지 — 선택 시트가 세로형 원본 행을 참조해야 한다
+        svout, _svm = RE.process(svb)
+        svwb2 = _ox.load_workbook(io.BytesIO(svout))
+        check('세로형[%s]: 검토파일에 결과선택 시트' % _sheet,
+              RE.DCM_SEL_SHEET in svwb2.sheetnames, svwb2.sheetnames)
+        _sel = svwb2[RE.DCM_SEL_SHEET]
+        # Day2 표(V열~)의 첫 행 수식이 Day2 실제 시작 행(_h2+1)을 가리켜야 한다
+        _f = str(_sel.cell(15, 2 + 20 + 3).value or '')
+        check('세로형[%s]: Day2 수식이 %d행을 참조' % (_sheet, _h2 + 1),
+              ('%d' % (_h2 + 1)) in _f and _sheet in _f, _f)
 
     # (5c) DCM 검토파일도 UC와 동일하게 [검토_가이드]·[결과선택] 시트를 포함해야 한다
     import openpyxl as _ox2  # noqa: E402

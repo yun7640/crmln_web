@@ -152,9 +152,9 @@ def process(in_bytes):
     """입력 xlsx 바이트 → (출력 xlsx 바이트, 요약 dict)."""
     up = openpyxl.load_workbook(io.BytesIO(in_bytes))
     up_do = openpyxl.load_workbook(io.BytesIO(in_bytes), data_only=True)
-    ms_name = '결과정리' if '결과정리' in up.sheetnames else (TMPL_MS if TMPL_MS in up.sheetnames else None)
+    ms_name = find_ms_sheet(up)
     if ms_name is None:
-        raise ValueError("'결과정리' 시트를 찾을 수 없습니다. 표준 CRMLN 측정지 형식이 필요합니다.")
+        raise ValueError(MS_NOT_FOUND_MSG)
     up_ms = up[ms_name]
     if _is_dcm(up_ms):
         return _process_dcm(up, up_ms)
@@ -305,10 +305,33 @@ def _build_review_sheet(wb, samples, qc):
 #                 HDL Sample CS01–CS04(9–12).  판정: TC ±1%, HDL ±1 mg/dL.
 # ============================================================
 DCM_CV_GUARD = 15.0  # 동일 검체 반복 CV(%)가 이보다 크면 데이터 정렬 오류로 보고 해당 Day 제외
-DCM_HEADER_ROW = 4   # 'A.value / R1 / R2 / R3 [/ R4 …]' 헤더가 있는 행
+DCM_HEADER_ROW = 4   # 'A.value / R1 / R2 / R3 [/ R4 …]' 헤더 기본 행(폴백용)
+DCM_HEADER_SCAN = 60 # 헤더 자동 탐색 범위(행). 세로형 측정지는 Day2 헤더가 16·17행 등으로 내려간다.
+DCM_BLOCK_ROWS = 8   # Day 블록 1개의 데이터 행 수 = QC/Control 4 + CS 검체 4
+
+# Day 블록 안에서의 **행 오프셋**(row0 기준). 종전에는 측정지 5–12행으로 하드코딩했으나
+# 세로형 측정지는 Day2가 17행·18행에서 시작하므로 블록 상대 오프셋으로 다룬다.
+#   0,1 = TC QC(NIST/CFS)  ·  2,3 = HDL Control  ·  4–7 = HDL Sample CS01–CS04
+DCM_ROW_SPEC = [(0, 'TC', False), (1, 'TC', False), (2, 'HDL', False), (3, 'HDL', False),
+                (4, 'HDL', True), (5, 'HDL', True), (6, 'HDL', True), (7, 'HDL', True)]
+DCM_SAMPLE_OFF = tuple(o for o, _a, s in DCM_ROW_SPEC if s)      # (4, 5, 6, 7)
+
 
 def _is_dcm(ws):
-    return str(ws.cell(7, 2).value or '').strip().startswith('HDL Control')
+    """DCM 측정지 판별 — Day 블록의 3번째 행 구분 라벨이 'HDL Control'로 시작하면 DCM.
+
+    종전에는 7행 2열만 봤는데, 세로형 측정지도 Day1 헤더가 4행이라 우연히 통과했다.
+    헤더 위치가 다른 측정지가 와도 깨지지 않도록 블록 기준 판별을 함께 둔다."""
+    if str(ws.cell(7, 2).value or '').strip().startswith('HDL Control'):
+        return True
+    try:
+        for dc in _dcm_day_blocks(ws).values():
+            v = str(ws.cell(dc['row0'] + 2, dc['label']).value or '').strip()
+            if v.startswith('HDL Control'):
+                return True
+    except Exception:
+        pass
+    return False
 
 def _cvn(reps):
     """반복 n개의 CV(%). 모집단 SD 기준(엑셀 측정지 표기와 동일 관례)."""
@@ -353,16 +376,43 @@ def _dcm_pick(reps):
     return drop, keep, sel, cv
 
 
-def _dcm_day_cols(ws):
-    """Day1/Day2 블록의 열 위치를 **헤더에서 자동 탐지**한다.
+MS_ALIASES = ('결과정리', '결과 취합', '결과취합', '측정결과', '결과 정리')
+MS_NOT_FOUND_MSG = ("측정 시트를 찾을 수 없습니다. '결과정리'(또는 '결과 취합') 시트가 있거나, "
+                    "'A.value / R1 / R2 / R3' 헤더를 가진 표준 CRMLN 측정지 형식이어야 합니다.")
 
-    과거에는 열을 하드코딩(Day2 = P/Q/R/S)했는데, 2026.7 측정지는 CS 검체 반복이 4개(R1–R4)로
-    늘면서 Day2 블록이 한 칸 밀렸다. 그 결과 **Day2 전체가 오류 없이 조용히 누락**되었다.
-    → 헤더 행에서 'A.value' 와 'R1','R2',… 를 찾아 블록마다 열을 결정한다.
-    반환: {day: {'a': A.value열, 'r': [R열…], 'label': 구분열, 'name': 검체명열}}"""
-    hdr = DCM_HEADER_ROW
-    maxc = max(ws.max_column or 0, 30)
-    blocks = []
+
+def find_ms_sheet(wb):
+    """측정 시트 이름을 찾는다. 이름이 다른 과거 측정지도 **구조로** 찾아낸다.
+
+    회차마다 시트명이 제각각이다 — 2026.7 `결과정리`, 2026.1 `결과 취합`, 2025.7 `Sheet2`.
+    'Sheet2' 같은 기본 이름은 별칭 목록에 넣을 수 없으므로, 별칭이 없으면
+    'A.value/R1…' 헤더를 가진 시트를 찾아 쓴다. RESULT(Conc)_* 원자료 시트는 뒤로 미룬다."""
+    names = list(wb.sheetnames)
+    for alias in MS_ALIASES:
+        if alias in names:
+            return alias
+    if TMPL_MS in names:
+        return TMPL_MS
+    cands = []
+    for nm in names:
+        try:
+            ws = wb[nm]
+        except Exception:
+            continue
+        maxc = max(ws.max_column or 0, 30)
+        maxr = min(max(ws.max_row or 0, DCM_HEADER_ROW), DCM_HEADER_SCAN)
+        n = sum(len(_dcm_hdr_groups(ws, h, maxc)) for h in range(1, maxr + 1))
+        if n >= 1:
+            # 원자료 시트(RESULT(Conc)_DAY1 등)보다 요약 시트를 우선한다.
+            cands.append((0 if not nm.upper().startswith('RESULT') else 1, -n, names.index(nm), nm))
+    if cands:
+        return sorted(cands)[0][3]
+    return None
+
+
+def _dcm_hdr_groups(ws, hdr, maxc):
+    """헤더 행 하나에서 'A.value + R1…Rn(n≥3)' 열 묶음을 전부 찾는다."""
+    groups = []
     for c in range(1, maxc + 1):
         v = str(ws.cell(hdr, c).value or '').strip().lower().replace(' ', '')
         if v in ('a.value', 'a.값', 'assignedvalue'):
@@ -375,11 +425,46 @@ def _dcm_day_cols(ws):
                 else:
                     break
             if len(rcols) >= 3:
-                blocks.append({'a': c, 'r': rcols, 'label': c - 2, 'name': c - 1})
-    if len(blocks) < 2:      # 헤더를 못 찾으면 종전 하드코딩으로 폴백
-        return {1: {'a': 4, 'r': [5, 6, 7], 'label': 2, 'name': 3},
-                2: {'a': 16, 'r': [17, 18, 19], 'label': 14, 'name': 15}}
-    return {1: blocks[0], 2: blocks[1]}
+                groups.append({'a': c, 'r': rcols, 'label': c - 2, 'name': c - 1,
+                               'hdr': hdr, 'row0': hdr + 1})
+    return groups
+
+
+def _dcm_day_blocks(ws):
+    """Day1/Day2 블록의 **열과 시작 행**을 헤더에서 자동 탐지한다.
+
+    측정지 배열이 두 가지 존재한다(둘 다 지원해야 한다).
+      · **가로형**(2026.7 `결과정리` 등) — 헤더 행 1개(4행)에 'A.value/R1…' 묶음이 **2개**.
+        Day1은 D/E–H, Day2는 오른쪽 Q/R–U. 반복 수가 3→4로 늘면 Day2가 옆으로 밀린다(v13 버그).
+      · **세로형**(2025.7 `Sheet2`, 2026.1 `결과 취합`) — 헤더 행이 **2개**이고 Day2가 아래로 쌓인다.
+        열은 Day1과 같지만 시작 행이 다르다(2026.1 = 4행·16행, 2025.7 = 4행·17행).
+        ★ 간격이 회차마다 달라 하드코딩할 수 없으므로 헤더를 실제로 찾아야 한다.
+
+    과거에는 열만 자동 탐지하고 행(5–12)은 하드코딩이었다. 그래서 세로형은 Day2 자리에
+    Day1과 같은 행을 읽어 **Day2가 조용히 Day1 사본이 되거나 빈 값**이 되었다(§0 위반).
+    이제 블록마다 `row0`(첫 데이터 행)를 함께 돌려주고, 소비처는 오프셋으로만 접근한다.
+
+    반환: {day: {'a', 'r':[R열…], 'label', 'name', 'hdr', 'row0'}}
+    """
+    maxc = max(ws.max_column or 0, 30)
+    maxr = min(max(ws.max_row or 0, DCM_HEADER_ROW), DCM_HEADER_SCAN)
+    found = []
+    for hdr in range(1, maxr + 1):
+        found.extend(_dcm_hdr_groups(ws, hdr, maxc))
+    if len(found) >= 2:
+        same = [g for g in found if g['hdr'] == found[0]['hdr']]
+        # 같은 헤더 행에 묶음이 2개면 가로형, 아니면 세로형(헤더 행 순서 = Day 순서)
+        b1, b2 = (same[0], same[1]) if len(same) >= 2 else (found[0], found[1])
+        return {1: b1, 2: b2}
+    if len(found) == 1:
+        # Day1만 확인된 측정지 — 없는 Day2를 하드코딩으로 **추측하지 않는다**(§0).
+        return {1: found[0]}
+    # 헤더를 전혀 못 찾으면 종전 하드코딩(구 3반복 가로형)으로 폴백
+    return {1: {'a': 4, 'r': [5, 6, 7], 'label': 2, 'name': 3, 'hdr': 4, 'row0': 5},
+            2: {'a': 16, 'r': [17, 18, 19], 'label': 14, 'name': 15, 'hdr': 4, 'row0': 5}}
+
+
+_dcm_day_cols = _dcm_day_blocks      # 하위 호환(구 이름)
 
 
 def _dcm_reps(ws, r, cols):
@@ -391,17 +476,23 @@ def _dcm_reps(ws, r, cols):
 
 
 def _parse_dcm(ws):
-    """DCM 측정지(5–12행) → (qc, samples). CV>가드 인 Day는 정렬오류로 제외.
+    """DCM 측정지 → (qc, samples). CV>가드 인 Day는 정렬오류로 제외.
+
+    행은 Day 블록의 `row0` 기준 오프셋(0–7)으로 접근하므로 가로형·세로형 배열 모두 처리된다.
     반복 개수는 측정지에 채워진 만큼(3개 또는 4개) 자동 인식한다."""
-    DAY = _dcm_day_cols(ws)
+    DAY = _dcm_day_blocks(ws)
     qc = []
-    for r, an in [(5, 'TC'), (6, 'TC'), (7, 'HDL'), (8, 'HDL')]:
-        if not str(ws.cell(r, 3).value or '').strip():
+    for off, an, is_s in DCM_ROW_SPEC:
+        if is_s:
             continue
         for day, cols in DAY.items():
+            r = cols['row0'] + off
             # 관리물질 이름은 Day 블록마다 다르다(Day1 NIST1 / Day2 NIST2) → 블록의 이름 열에서 읽는다.
+            # 구 레이아웃 측정지는 Day2 이름 열이 비어 있고 C열만 채워져 있으므로 폴백을 둔다.
             name = (str(ws.cell(r, cols['name']).value or '').strip()
                     or str(ws.cell(r, 3).value or '').strip())
+            if not name:
+                continue
             A = _num(ws.cell(r, cols['a']).value)
             reps = _dcm_reps(ws, r, cols)
             if A is None or A == 0 or len(reps) < 3 or any(x is None for x in reps):
@@ -413,36 +504,42 @@ def _parse_dcm(ws):
                            biaspct=(mean - A) / A * 100,
                            biasmgdl=(mean - A) if an == 'HDL' else None))
     samples = {}
-    for r in range(9, 13):
-        name = str(ws.cell(r, 3).value or '').strip()
-        if not name.upper().replace(' ', '').startswith('CS'):
+    for off, an, is_s in DCM_ROW_SPEC:
+        if not is_s:
             continue
-        per = {}
+        per, key = {}, None
         for day, cols in DAY.items():
+            r = cols['row0'] + off
+            name = (str(ws.cell(r, cols['name']).value or '').strip()
+                    or str(ws.cell(r, 3).value or '').strip())
+            if not name.upper().replace(' ', '').startswith('CS'):
+                continue
+            key = key or name
             reps = _dcm_reps(ws, r, cols)
             if len(reps) >= 3 and all(x is not None for x in reps) and _cvn(reps) <= DCM_CV_GUARD:
                 per[day] = reps
-        if per:
-            samples[name] = per
+        if key and per:
+            samples[key] = per
     return qc, samples
 
 
 def _extract_dcm_rows(ws):
-    """DCM 측정지(5–12행) → Day별 원자료 행(Excel-mirror 표시용).
+    """DCM 측정지 → Day별 원자료 행(Excel-mirror 표시용).
+    행은 Day 블록 `row0` 기준 오프셋으로 접근한다(가로형·세로형 공통).
     반환: {day: [ {label, name, analyte, is_sample, A, reps[n], mean_n, cv_n, n_reps} ]}"""
-    DAY = _dcm_day_cols(ws)
-    SPEC = [(5, 'TC', False), (6, 'TC', False), (7, 'HDL', False), (8, 'HDL', False),
-            (9, 'HDL', True), (10, 'HDL', True), (11, 'HDL', True), (12, 'HDL', True)]
+    DAY = _dcm_day_blocks(ws)
     out = {1: [], 2: []}
-    for r, an, is_s in SPEC:
-        if not (str(ws.cell(r, 2).value or '').strip() or str(ws.cell(r, 3).value or '').strip()):
-            continue
+    for off, an, is_s in DCM_ROW_SPEC:
         for day, cols in DAY.items():
-            # 구분·검체명도 Day 블록별 열에서 읽는다(Day2는 NIST2 등 이름이 다름).
+            r = cols['row0'] + off
+            # 구분·검체명은 Day 블록별 열에서 읽는다(Day2는 NIST2 등 이름이 다름).
+            # 구 레이아웃은 Day2 라벨·이름 열이 비어 있으므로 B/C열 폴백을 둔다.
             label = (str(ws.cell(r, cols['label']).value or '').strip()
                      or str(ws.cell(r, 2).value or '').strip())
             name = (str(ws.cell(r, cols['name']).value or '').strip()
                     or str(ws.cell(r, 3).value or '').strip())
+            if not (label or name):
+                continue
             if is_s and not name.upper().replace(' ', '').startswith('CS'):
                 continue
             reps = _dcm_reps(ws, r, cols)
@@ -475,9 +572,14 @@ def _process_dcm(up, ms):
         pass          # 선택 시트 생성 실패가 검토 파일 전체를 막지 않도록
     _build_dcm_guide(up, ms_title=ms_title)
     # 순서: 측정/RESULT 뒤에 검토 시트
-    order = [DCM_GUIDE, 'RESULT(Conc)_DAY1', 'RESULT(Conc)_DAY2', '결과정리', TMPL_MS,
-             DCM_SEL_SHEET, DCM_SHEET]
-    up._sheets.sort(key=lambda s: order.index(s.title) if s.title in order else 500)
+    # ★ 시트명은 회차마다 다르다(결과정리 / 결과 취합 / Sheet2, RESULT(Conc)_DAY1 / _day1).
+    #   대소문자를 무시하고 비교하며, 실제 측정 시트명(ms_title)을 목록에 넣는다.
+    order = [DCM_GUIDE, 'RESULT(CONC)_DAY1', 'RESULT(CONC)_DAY2', ms_title.upper(),
+             '결과정리', TMPL_MS.upper(), DCM_SEL_SHEET, DCM_SHEET]
+    def _rank(s):
+        t = s.title.upper() if s.title.upper() in [o.upper() for o in order] else None
+        return [o.upper() for o in order].index(t) if t else 500
+    up._sheets.sort(key=_rank)
     try:
         up.calculation.fullCalcOnLoad = True
     except Exception:
@@ -550,9 +652,11 @@ def _build_dcm_select(wb, ms, qc, rows, ms_title='결과정리'):
            '기본 채택', 'Δ 평균 (옵션−기본)', '기본 CV%', 'Δ CV%p (옵션−기본)',
            '서버 계산값', '검증']
     NCOL = len(HDR)
-    SR0, R0 = 5, 15             # 측정지 5행 ↔ 시트 15행
-    NROWS = 8                   # 측정지 5–12행
-    SAMPLE_SRC = (9, 10, 11, 12)
+    R0 = 15                     # 이 시트에서 Day 표가 시작하는 행(측정지 블록 row0 ↔ 시트 15행)
+    NROWS = DCM_BLOCK_ROWS      # Day 블록 8행(QC 4 + CS 4)
+    SAMPLE_OFF = DCM_SAMPLE_OFF # 블록 내 CS 검체 오프셋 (4,5,6,7)
+    # ★ 측정지 원본 행은 Day마다 다를 수 있다(세로형은 Day2가 17·18행에서 시작).
+    #   따라서 소스 행은 반드시 `DAY[day]['row0'] + 오프셋`으로 계산한다.
     H1, H2, HW, OPT_C = H_DCM_SEL
 
     def cols(day, base):
@@ -621,19 +725,26 @@ def _build_dcm_select(wb, ms, qc, rows, ms_title='결과정리'):
     # ── Day 표 ──────────────────────────────────────────────────────
     for day in (1, 2):
         b = cols(day, B0)
-        dc = DAY[day]
+        dc = DAY.get(day)
+        if dc is None:               # Day2가 없는 측정지 — 빈 자리를 추측해 채우지 않는다(§0)
+            M(12, b, b + NCOL - 1, 'DAY %d — 측정지에서 찾지 못함' % day,
+              bold=True, size=11, color='FFFFFF', fill=GREY, align='center')
+            continue
         acol, rcols = dc['a'], dc['r']
         M(12, b, b + 2, 'DAY %d' % day, bold=True, size=11, color='FFFFFF', fill=GREY, align='center')
+        # Day 머리글 주석(실험일·장비)은 헤더 2행 위, A.value 기준 +5열에 있다(가로형·세로형 공통).
         M(12, b + 3, b + NCOL - 1,
-          "=IF({s}!{c}2=\"\",\"\",{s}!{c}2)".format(s=SRC, c=L(dc['a'] + 5)), size=9, color='555555')
+          "=IF({s}!{c}{nr}=\"\",\"\",{s}!{c}{nr})".format(
+              s=SRC, c=L(dc['a'] + 5), nr=max(dc['hdr'] - 2, 1)), size=9, color='555555')
         for i, t in enumerate(HDR):
             C(14, b + i, t, bold=True, size=9, color='FFFFFF', fill=NAVY, align='center', border=True, wrap=True)
         ws.row_dimensions[14].height = 30
 
         hb = H1 if day == 1 else H2      # 헬퍼 시작 열
         for r in range(R0, R0 + NROWS):
-            sr = SR0 + (r - R0)
-            is_s = sr in SAMPLE_SRC
+            off = r - R0
+            sr = dc['row0'] + off        # ← Day별 실제 측정지 행
+            is_s = off in SAMPLE_OFF
             rng = '$%s%d:$%s%d' % (L(b + 3), r, L(b + 6), r)
             # 원자료 참조
             C(r, b, "=IF({s}!{c}{sr}=\"\",\"\",{s}!{c}{sr})".format(s=SRC, c=L(dc['label']), sr=sr), size=9, border=True)
@@ -709,32 +820,31 @@ def _build_dcm_select(wb, ms, qc, rows, ms_title='결과정리'):
                   sv='$%s%d' % (L(b + 16), r), m=mcell, c=CODE),
               size=9, align='center', border=True, bold=True)
 
-        _dcm_sel_helpers(ws, b, hb, R0, NROWS, SR0, SAMPLE_SRC, CODE, L)
+        _dcm_sel_helpers(ws, b, hb, R0, NROWS, SAMPLE_OFF, CODE, L)
 
     # 서버가 계산한 채택값을 '서버 계산값' 열에 적어 자동 대조(검증 열)
     for day in (1, 2):
         b = cols(day, B0)
         smp = [x for x in (rows.get(day) or []) if x['is_sample']]
         for i, rr in enumerate(smp):
-            if i >= len(SAMPLE_SRC):
+            if i >= len(SAMPLE_OFF):
                 break
             _d, _k, sel, _cv = _dcm_pick(rr['reps'])
-            ws.cell(R0 + (SAMPLE_SRC[i] - SR0), b + 16, round(sel, 4))
+            ws.cell(R0 + SAMPLE_OFF[i], b + 16, round(sel, 4))
 
-    _dcm_sel_summary(ws, B0, OFF, NCOL, R0, SAMPLE_SRC, SR0, L, C, M, NAVY, BLUE, box)
-    _dcm_sel_manual(ws, B0, OFF, R0, SAMPLE_SRC, SR0, L, C, M, NAVY, box, H1, H2)
-    _dcm_sel_format(ws, B0, OFF, NCOL, R0, NROWS, SR0, H1, H2, HW, OPT_C, L)
+    _dcm_sel_summary(ws, B0, OFF, NCOL, R0, SAMPLE_OFF, L, C, M, NAVY, BLUE, box)
+    _dcm_sel_manual(ws, B0, OFF, R0, SAMPLE_OFF, L, C, M, NAVY, box, H1, H2)
+    _dcm_sel_format(ws, B0, OFF, NCOL, R0, NROWS, H1, H2, HW, OPT_C, L)
     return ws
 
 
-def _dcm_sel_helpers(ws, b, hb, R0, NROWS, SR0, SAMPLE_SRC, CODE, L):
+def _dcm_sel_helpers(ws, b, hb, R0, NROWS, SAMPLE_OFF, CODE, L):
     """선택 옵션별 제외 replicate index를 계산하는 헬퍼 열(숨김).
 
     rank_k = (자기보다 작은 값 수) + (앞쪽 반복 중 같은 값 수) → **중복값이 있어도 순위가 유일**하고
     같은 값이면 앞 index가 낮은 순위를 갖는다(서버 `_dcm_pick`의 정렬 규칙과 동일)."""
     for r in range(R0, R0 + NROWS):
-        sr = SR0 + (r - R0)
-        is_s = sr in SAMPLE_SRC
+        is_s = (r - R0) in SAMPLE_OFF
         rng = '$%s%d:$%s%d' % (L(b + 3), r, L(b + 6), r)
         ws.cell(r, hb, '=COUNT(%s)' % rng)                                    # n
         for k in range(4):
@@ -789,7 +899,7 @@ def _dcm_sel_helpers(ws, b, hb, R0, NROWS, SR0, SAMPLE_SRC, CODE, L):
                 'IF({c}="DIR_LO",{l2},{b2})))))'.format(c=CODE, m2=man2, p2=pair2, h2=hi2, l2=lo2, b2=b2))
 
 
-def _dcm_sel_summary(ws, B0, OFF, NCOL, R0, SAMPLE_SRC, SR0, L, C, M, NAVY, BLUE, box):
+def _dcm_sel_summary(ws, B0, OFF, NCOL, R0, SAMPLE_OFF, L, C, M, NAVY, BLUE, box):
     """② 제출용 요약 — 검체별 Day1·Day2 채택값·Day차·평균."""
     R = R0 + 10
     M(R, B0, B0 + 7, '② 제출용 요약 (채택 2반복 · Day1–Day2 평균)', bold=True, size=11.5,
@@ -798,8 +908,8 @@ def _dcm_sel_summary(ws, B0, OFF, NCOL, R0, SAMPLE_SRC, SR0, L, C, M, NAVY, BLUE
                            '제출값(평균)', 'CV Day1(%)', 'CV Day2(%)']):
         C(R, B0 + i, t, bold=True, size=9.5, color='FFFFFF', fill=NAVY, align='center', border=True)
     R += 1
-    for sr in SAMPLE_SRC:
-        rr = R0 + (sr - SR0)
+    for off in SAMPLE_OFF:
+        rr = R0 + off
         d1 = '$%s%d' % (L(B0 + 7), rr)
         d2 = '$%s%d' % (L(B0 + OFF + 7), rr)
         C(R, B0, '=IF($%s%d="","",$%s%d)' % (L(B0 + 1), rr, L(B0 + 1), rr), size=9, border=True)
@@ -821,9 +931,9 @@ def _dcm_sel_summary(ws, B0, OFF, NCOL, R0, SAMPLE_SRC, SR0, L, C, M, NAVY, BLUE
     ws.row_dimensions[R].height = 24
 
 
-def _dcm_sel_manual(ws, B0, OFF, R0, SAMPLE_SRC, SR0, L, C, M, NAVY, box, H1, H2):
+def _dcm_sel_manual(ws, B0, OFF, R0, SAMPLE_OFF, L, C, M, NAVY, box, H1, H2):
     """③ 부록 — '수동 지정' 옵션에서 쓰는 제외 replicate 입력표."""
-    R = R0 + 10 + 3 + len(SAMPLE_SRC) + 2
+    R = R0 + 10 + 3 + len(SAMPLE_OFF) + 2
     M(R, B0, B0 + 4, "③ 부록 — 수동 지정 (선택 옵션이 '수동 지정'일 때만 적용)",
       bold=True, size=11, color='FFFFFF', fill=NAVY); R += 1
     M(R, B0, B0 + 4, '검체·Day별로 제외할 replicate를 R1–R4 중에서 고릅니다. 2개를 골라야 채택이 2개가 됩니다.',
@@ -835,8 +945,8 @@ def _dcm_sel_manual(ws, B0, OFF, R0, SAMPLE_SRC, SR0, L, C, M, NAVY, box, H1, H2
     ws.add_data_validation(dv)
     for day in (1, 2):
         hb = H1 if day == 1 else H2
-        for sr in SAMPLE_SRC:
-            rr = R0 + (sr - SR0)
+        for off in SAMPLE_OFF:
+            rr = R0 + off
             C(R, B0, '=IF($%s%d="","",$%s%d)' % (L(B0 + 1), rr, L(B0 + 1), rr), size=9, border=True)
             C(R, B0 + 1, 'Day%d' % day, size=9, align='center', border=True)
             for k in (0, 1):
@@ -850,15 +960,15 @@ def _dcm_sel_manual(ws, B0, OFF, R0, SAMPLE_SRC, SR0, L, C, M, NAVY, box, H1, H2
             R += 1
 
 
-def _dcm_sel_format(ws, B0, OFF, NCOL, R0, NROWS, SR0, H1, H2, HW, OPT_C, L):
+def _dcm_sel_format(ws, B0, OFF, NCOL, R0, NROWS, H1, H2, HW, OPT_C, L):
     """조건부 서식 — 채택=노란색, 제외=회색 취소선, 검증 불일치=빨강, bias 한계 초과=빨강.
 
     ★ 판정 단위 주의: TC(NIST·CFS)는 **±1%**, HDL Control은 **±1 mg/dL** 이다.
       두 행에 같은 열·같은 한계를 적용하면 TC가 잘못 빨강 처리된다(측정지 TC bias는 mg/dL로 1을 쉽게 넘김)."""
     YEL, GRY, RED2 = 'FFF2A8', 'F2F2F2', 'C0392B'
     r1, r2 = R0, R0 + NROWS - 1
-    tc_rows = (R0 + (5 - SR0), R0 + (6 - SR0))      # 측정지 5·6행 = NIST·CFS (TC)
-    hdl_rows = (R0 + (7 - SR0), R0 + (8 - SR0))     # 측정지 7·8행 = HDL Control
+    tc_rows = (R0 + 0, R0 + 1)      # 블록 오프셋 0·1 = NIST·CFS (TC)
+    hdl_rows = (R0 + 2, R0 + 3)     # 블록 오프셋 2·3 = HDL Control
     for day, hb in ((1, H1), (2, H2)):
         b = B0 + (0 if day == 1 else OFF)
         rep = '%s%d:%s%d' % (L(b + 3), r1, L(b + 6), r2)
@@ -1199,8 +1309,8 @@ def _summarize_dcm(ws):
 def summarize_round(in_bytes):
     """업로드 xlsx → 회차 누적 저장용 compact dict(UC/DCM 자동 감지)."""
     up = openpyxl.load_workbook(io.BytesIO(in_bytes), data_only=False)
-    ms = '결과정리' if '결과정리' in up.sheetnames else (TMPL_MS if TMPL_MS in up.sheetnames else None)
+    ms = find_ms_sheet(up)
     if ms is None:
-        raise ValueError("'결과정리' 측정 시트를 찾을 수 없습니다.")
+        raise ValueError(MS_NOT_FOUND_MSG)
     ws = up[ms]
     return _summarize_dcm(ws) if _is_dcm(ws) else _summarize_uc(ws)

@@ -446,3 +446,77 @@ HANDOVER_인수인계.md        (이 문서)
 
 `G:\…\CRMLN\` 루트에는 이 `HANDOVER_인수인계.md`와 `회차누적분석_미리보기.html`(정적 미리보기)도 있습니다.
 `crmln-app` 폴더를 삭제하고 나면 **정본은 GitHub 리포, 작업은 로컬 clone** — 두 곳으로 단순해집니다.
+
+---
+
+## 13. 두 대의 PC에서 번갈아 작업하기 (직장 PC2 ↔ 집 PC1)
+
+동일 사용자·동일 계정(GitHub / Railway / GitHub Desktop). **동기화 통로는 GitHub 하나뿐입니다.**
+Google Drive나 Cowork 대화는 동기화 수단이 아닙니다.
+
+### 한 번만 (각 PC에서 1회)
+
+GitHub Desktop → File → Clone repository → `yun7640/crmln_web`
+→ `C:\Users\<사용자>\Documents\GitHub\crmln_web`
+(경로 확인: GitHub Desktop → **Repository → Show in Explorer** `Ctrl+Shift+F`)
+
+### 매번 (양쪽 공통 3단계)
+
+| 순서 | 할 일 |
+|---|---|
+| **① 시작 전** | GitHub Desktop에서 **Fetch origin → Pull origin** |
+| **② 작업** | Cowork 새 작업 → **On your computer** → 폴더 = `crmln_web` → 아래 프롬프트 |
+| **③ 끝낼 때** | Claude가 commit까지 수행 → **사용자가 Push 버튼** |
+
+②의 프롬프트(고정 문구):
+
+> 이 폴더의 `HANDOVER_인수인계.md`를 읽고 지금까지 상태를 파악한 다음 이어서 작업해줘.
+> 파일 수정은 이 폴더에 직접 반영하고, 검증 후 커밋까지 처리해줘.
+
+### 반드시 지킬 규칙 2개
+
+1. **자리를 뜨기 전 반드시 Push.** 커밋만 하고 Push하지 않으면 다른 PC에서 보이지 않습니다.
+   작업트리에만 있는 파일도 마찬가지입니다.
+2. **두 PC에서 동시에 작업하지 않기.** 한쪽에서 Push를 끝낸 뒤 다른 쪽에서 Pull하고 시작하세요.
+   동시 작업은 병합 충돌을 만듭니다.
+
+> 실제 사례(2026-07-27): PC1에서 이 §13을 작성해 두고 Push하지 않은 채 자리를 옮겼더니,
+> PC2의 GitHub Desktop에는 "No local changes"로만 보였다. 파일이 사라진 것이 아니라
+> **푸시되지 않아 건너오지 않은 것.** 규칙 1을 어기면 정확히 이렇게 된다.
+
+### 세션 종료 전 체크리스트
+
+- [ ] 스모크 검증 통과 (`python3 tools/smoke_headers.py`, `bash tools/smoke_gunicorn.sh`)
+- [ ] **이 문서(§9 변경 이력, §10 다음 작업) 갱신** ← 다음 PC로 넘기는 바통
+- [ ] commit (Claude) → **Push (사용자)**
+- [ ] Railway 재배포 확인 → 공개 URL 동작 확인
+
+### 왜 이 방식인가
+
+- **Cowork 대화는 PC 간 이어지지 않습니다.** on-computer 세션은 그 PC의 폴더에 묶여 있습니다.
+  그래서 **이 인수인계 문서가 대화 기록을 대신하는 바통**입니다. 반드시 갱신하고 커밋하세요.
+- **Railway는 신경 쓸 것이 없습니다.** GitHub main에서 자동 배포하므로 어느 PC에서 Push하든 동일합니다.
+- ⚠️ **git 리포를 Google Drive 안에 두지 마십시오.** Drive 동기화가 `.git` 내부를 건드려 저장소가
+  깨질 수 있고, 두 PC가 동시에 열면 특히 위험합니다. Drive는 측정 원본 엑셀 등 **비-코드 자료 전용**.
+
+### 충돌이 났을 때
+
+Pull 시 충돌이 나면 대개 ①(Pull) 을 건너뛰고 작업한 경우입니다.
+GitHub Desktop → **Branch → Update from main** 으로 병합하거나,
+로컬 변경이 이미 다른 PC에서 더 진전된 형태로 반영돼 있다면 **Discard changes 후 Pull** 하십시오.
+버리기 전 반드시 History에서 origin 쪽에 해당 내용이 있는지 확인할 것.
+
+### Claude가 남긴 `.git/index.lock` 오류
+
+클라우드 세션의 Claude가 마운트된 리포에서 git 명령을 실행하면 `.git/index.lock` 이 생기는데,
+샌드박스가 파일 삭제를 차단해 스스로 치우지 못합니다. 이 lock이 남아 있으면
+**GitHub Desktop이 인덱스를 못 읽어 변경이 없는 것처럼 보입니다.**
+
+```
+del "C:\Users\yun76\Documents\GitHub\crmln_web\.git\index.lock"
+```
+
+삭제 후 GitHub Desktop → **Repository → Refresh**.
+`_to_delete\` 폴더가 생겨 있으면 함께 지우십시오.
+⇒ 클라우드 세션에서는 마운트 리포에 **git 명령을 실행하지 말고 파일 쓰기만** 할 것.
+

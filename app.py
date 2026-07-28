@@ -120,6 +120,31 @@ def rounds_data():
                               mimetype='application/json')
 
 
+@app.route('/selections')
+@login_required
+def selections_get():
+    """⑦탭 — 회차별 **수기** 제출 선택 기준 기록.
+
+    ★ 기록 전용이다. 서버의 채택 로직(`_dcm_pick`/`combo_pick`)은 이 값을 읽지 않으므로
+      여기에 무엇을 적어도 검토 결과가 바뀌지 않는다(§0)."""
+    return app.response_class(json.dumps(rounds.selection_payload(), ensure_ascii=False),
+                              mimetype='application/json')
+
+
+@app.route('/selections/save', methods=['POST'])
+@login_required
+def selections_save():
+    """회차·모드별 수기 선택 저장(덮어쓰기). 본문은 JSON."""
+    d = request.get_json(silent=True) or {}
+    label = (d.get('label') or '').strip()
+    mode = (d.get('mode') or '').strip().lower()
+    ok, msg = rounds.save_selection(label, mode, d.get('samples') or {},
+                                    user=session.get('user', ''), note=d.get('note') or '')
+    body = json.dumps({'ok': bool(ok), 'message': msg,
+                       'label': rounds.canon_label(label), 'mode': mode}, ensure_ascii=False)
+    return app.response_class(body, mimetype='application/json', status=200 if ok else 400)
+
+
 @app.route('/rounds/stats')
 @login_required
 def rounds_stats():

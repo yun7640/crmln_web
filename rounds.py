@@ -319,6 +319,125 @@ def add_round(label, summary, user='', date='', reference=False, date_certain=Fa
                 else '저장 실패 — Postgres(DATABASE_URL) 또는 Railway Volume(ROUNDS_FILE)이 필요합니다.')
 
 
+# ── CRMLN 제출 결과 선택 기준(수기 기록) ─────────────────────────────
+# 사용자 확정(2026-07-28): 제출에 쓸 반복(replicate) 선택은 **매 회차 사람이 수기로 결정**한다.
+# 그 결정을 회차별로 남겨 **다음 회차 선택 시 참고**한다(⑦탭).
+#
+# ★ 이 기록은 '무엇을 골랐는지'에 대한 **기록일 뿐** 자동 채택 로직이 아니다(§0).
+#   서버의 `_dcm_pick`/`combo_pick`은 이 값을 읽지 않으며, 여기 저장된 값 때문에
+#   검토 결과가 달라지지 않는다. 화면에서 알고리즘 채택값과 **병기**해 보여 준다.
+#
+# 저장 위치: app_rounds 테이블의 **의사 모드 `'selection'`** 행 (스키마 변경 없음).
+#   data = {'uc': {...}, 'dcm': {...}} 형태로 두 모드를 한 행에 담는다.
+SEL_MODE = 'selection'
+SEL_REPS = ('R1', 'R2', 'R3', 'R4')
+SEL_KEEP_N = 2                      # CRMLN 제출은 채택 2반복(§4)
+SEL_DAYS = ('1', '2')
+
+
+def validate_selection(sel):
+    """수기 선택 입력 검증. 반환 (ok, 정규화된 dict 또는 오류 메시지).
+
+    형식: {검체: {Day: {'keep': ['R1','R3'], 'note': '...'}}}
+    ★ 채택은 반드시 **정확히 2개**여야 한다 — 제출 규칙이 2반복이므로,
+      1개나 3개가 저장되면 다음 회차 참고 자료로서 의미가 없다."""
+    if not isinstance(sel, dict):
+        return False, '선택 내용을 해석하지 못했습니다.'
+    out = {}
+    for sample, per_day in sel.items():
+        name = str(sample).strip().upper().replace(' ', '')
+        if not name or not isinstance(per_day, dict):
+            continue
+        block = {}
+        for day, v in per_day.items():
+            d = str(day).strip().lstrip('Dd').lstrip('ay').strip() or str(day)
+            d = ''.join(ch for ch in str(day) if ch.isdigit()) or str(day)
+            if d not in SEL_DAYS:
+                return False, "Day는 1 또는 2여야 합니다(입력: %s)." % day
+            v = v or {}
+            keep = [str(x).strip().upper() for x in (v.get('keep') or []) if str(x).strip()]
+            note = str(v.get('note') or '').strip()
+            if not keep and not note:
+                continue                      # 빈 칸은 저장하지 않음
+            bad = [k for k in keep if k not in SEL_REPS]
+            if bad:
+                return False, '채택 반복은 R1–R4만 가능합니다(입력: %s).' % ', '.join(bad)
+            if len(set(keep)) != len(keep):
+                return False, '%s Day%s: 같은 반복을 중복 선택했습니다.' % (name, d)
+            if keep and len(keep) != SEL_KEEP_N:
+                return False, ('%s Day%s: 채택은 정확히 %d개여야 합니다(현재 %d개).'
+                               % (name, d, SEL_KEEP_N, len(keep)))
+            block[d] = {'keep': sorted(keep, key=lambda x: SEL_REPS.index(x)), 'note': note}
+        if block:
+            out[name] = block
+    return True, out
+
+
+def save_selection(label, mode, sel, user='', note=''):
+    """회차·모드별 수기 선택을 저장(덮어쓰기). 반환 (ok, 메시지)."""
+    label = canon_label(label)
+    if not label:
+        return False, '회차 라벨(예: 2026.7)을 입력하세요.'
+    mode = str(mode or '').lower()
+    if mode not in ('uc', 'dcm'):
+        return False, '모드는 uc 또는 dcm이어야 합니다.'
+    ok, res = validate_selection(sel)
+    if not ok:
+        return False, res
+    rec = {'samples': res, 'note': str(note or '').strip(), 'by': user,
+           'saved_at': datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
+    cur = load_selections().get(label) or {}
+    cur = {k: v for k, v in cur.items() if k in ('uc', 'dcm')}
+    cur[mode] = rec
+    if db.configured():
+        if db.rounds_upsert(label, SEL_MODE, cur, date='', user=user):
+            return True, '%s 회차 %s 선택 기준을 저장했습니다.' % (label, mode.upper())
+    s = load_store()
+    r = s.setdefault(label, {'label': label})
+    r[SEL_MODE] = cur
+    if _save(s):
+        return True, '%s 회차 %s 선택 기준을 저장했습니다.' % (label, mode.upper())
+    return False, '저장 실패 — Postgres(DATABASE_URL) 또는 Volume(ROUNDS_FILE)이 필요합니다.'
+
+
+def load_selections():
+    """{label: {'uc': {...}, 'dcm': {...}}} — 저장된 수기 선택 전체."""
+    out = {}
+    for label, r in (load_store() or {}).items():
+        sel = (r or {}).get(SEL_MODE)
+        if isinstance(sel, dict) and sel:
+            out[label] = {k: v for k, v in sel.items() if k in ('uc', 'dcm')}
+    return out
+
+
+def selection_payload():
+    """⑦탭 payload — 수기 선택 이력 + 직전 회차(참고 대상) 안내."""
+    sels = load_selections()
+    labels = sorted(sels, key=_key)
+    store = load_store() or {}
+    # 화면에서 '알고리즘 채택값'과 병기할 수 있도록 회차별 계산 결과도 함께 넘긴다.
+    computed = {}
+    for label, r in store.items():
+        per = {}
+        for mode in ('uc', 'dcm'):
+            s = (r or {}).get(mode)
+            if isinstance(s, dict) and s.get('samples'):
+                per[mode] = s['samples']
+        if per:
+            computed[label] = per
+    return {
+        'labels': labels,
+        'selections': sels,
+        'computed': computed,
+        'all_labels': sorted(set(list(store) + labels), key=_key),
+        'reps': list(SEL_REPS),
+        'keep_n': SEL_KEEP_N,
+        'note': ('이 표는 매 회차 사람이 수기로 결정한 제출 선택을 남긴 기록입니다. '
+                 '다음 회차 선택 시 참고용이며, 서버의 채택 로직은 이 값을 읽지 않습니다. '
+                 '최종 제출·판정은 CDC 참조법 회신 및 검토자 확인 후 확정합니다.'),
+    }
+
+
 def is_reference(r):
     """회차 레코드(또는 uc/dcm 요약)가 참고용 소급 자료인지."""
     if not isinstance(r, dict):

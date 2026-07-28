@@ -298,6 +298,64 @@ def main():
     check('⑥탭 화면에 QC 경향 전용 안내',
           'QC bias 경향성 분석 전용' in _dash and "왼쪽 '자동 검토' 패널" in _dash)
 
+    print('[6f] ⑦탭 CRMLN 제출 결과 선택 기준 — 수기 기록(다음 회차 참고)')
+    r = c.get('/selections')
+    check('/selections 200', r.status_code == 200, r.status_code)
+    assert_latin1_headers(r, '/selections')
+    P = r.get_json(silent=True) or {}
+    for k in ('labels', 'selections', 'computed', 'reps', 'keep_n', 'note'):
+        check('selections.%s 존재' % k, k in P, sorted(P))
+    check('채택 2반복 규칙 명시', P.get('keep_n') == 2, P.get('keep_n'))
+    check('R1–R4 목록', P.get('reps') == ['R1', 'R2', 'R3', 'R4'], P.get('reps'))
+    check('기록 전용임을 note에 명시',
+          '채택 로직은 이 값을 읽지 않' in str(P.get('note') or ''), P.get('note'))
+    good = {'label': '2026.7', 'mode': 'dcm',
+            'samples': {'CS01': {'1': {'keep': ['R2', 'R3'], 'note': 'R1 이상치'},
+                                 '2': {'keep': ['R1', 'R4'], 'note': ''}},
+                        'CS02': {'1': {'keep': ['R1', 'R2'], 'note': ''}}}}
+    r = c.post('/selections/save', json=good)
+    check('/selections/save 200', r.status_code == 200, r.data[:200])
+    assert_latin1_headers(r, '/selections/save')
+    check('저장 ok=True', (r.get_json(silent=True) or {}).get('ok') is True, r.get_json(silent=True))
+    P2 = c.get('/selections').get_json(silent=True) or {}
+    got = ((P2.get('selections') or {}).get('2026.7') or {}).get('dcm') or {}
+    check('저장 후 조회 왕복', (got.get('samples') or {}).get('CS01', {}).get('1', {}).get('keep')
+          == ['R2', 'R3'], got)
+    check('사유 메모도 보존', (got.get('samples') or {}).get('CS01', {}).get('1', {}).get('note')
+          == 'R1 이상치', got)
+    check('저장 시각·작성자 기록', bool(got.get('saved_at')), got)
+    check('회차 라벨 정규화 적용(2026-07 → 2026.7)',
+          (c.post('/selections/save', json=dict(good, label='2026-07')).get_json(silent=True)
+           or {}).get('label') == '2026.7')
+    # ★ 채택 2개 규칙 위반은 서버가 거부해야 한다 — 다음 회차 참고 자료로서 의미가 없어진다
+    for bad, desc in (({'CS01': {'1': {'keep': ['R1']}}}, '채택 1개'),
+                      ({'CS01': {'1': {'keep': ['R1', 'R2', 'R3']}}}, '채택 3개'),
+                      ({'CS01': {'1': {'keep': ['R1', 'R1']}}}, '중복 선택'),
+                      ({'CS01': {'1': {'keep': ['R9', 'R2']}}}, 'R1–R4 범위 밖'),
+                      ({'CS01': {'3': {'keep': ['R1', 'R2']}}}, 'Day3')):
+        rr = c.post('/selections/save', json={'label': '2026.7', 'mode': 'dcm', 'samples': bad})
+        check('선택 저장 거부 — %s' % desc, rr.status_code == 400, (desc, rr.status_code))
+        assert_latin1_headers(rr, '/selections/save(%s)' % desc)
+    check('잘못된 모드 거부',
+          c.post('/selections/save', json={'label': '2026.7', 'mode': 'zz', 'samples': {}}).status_code == 400)
+    check('라벨 없으면 거부',
+          c.post('/selections/save', json={'label': '', 'mode': 'dcm', 'samples': {}}).status_code == 400)
+    # ★ 기록이 채택 로직에 영향을 주지 않아야 한다(§0) — 저장 전후 검토 결과가 같아야 한다
+    import review_engine as _RE0  # noqa: E402
+    with open(dcm_path, 'rb') as f:
+        _before = _RE0.summarize_round(f.read())
+    c.post('/selections/save', json={'label': '2026.7', 'mode': 'dcm',
+                                     'samples': {'CS01': {'1': {'keep': ['R1', 'R2']}}}})
+    with open(dcm_path, 'rb') as f:
+        _after = _RE0.summarize_round(f.read())
+    check('수기 기록이 채택 로직에 영향 없음(§0)',
+          json.dumps(_before, sort_keys=True) == json.dumps(_after, sort_keys=True))
+    check('⑦탭 패널·탭 버튼 존재',
+          'id="t7"' in _dash and '⑦ 제출 결과 선택 기준' in _dash)
+    check('탭 전환 배열에 t7 포함', "['t1','t2','t3','t4','t5','t6','t7']" in _dash)
+    check('⑦탭 초기화 훅 연결', 'window.initSel' in _dash and "b.dataset.tab==='t7'" in _dash)
+    check('⑦탭에 기록 전용 경고', '이 표는 기록 전용입니다' in _dash)
+
     print('[6c] T1 과거 회차 소급 누적 — 라벨 추정·연도 제한·시드 병기')
     import rounds as R  # noqa: E402
     # (1) 라벨 자동 추정: 파일명·시트명에서만 추정하며 저장하지 않는다

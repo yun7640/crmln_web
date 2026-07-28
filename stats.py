@@ -96,7 +96,8 @@ def bias_summary(store):
                 for b in block.values():
                     b['reference'] = bool(s.get('reference'))
                     # 컷오프 이전 회차는 측정지 구조가 달라 추세 비교 대상이 아니다(참고 표시만).
-                    b['legacy'] = not rounds.in_cumulative(label)
+                    # ★ 컷오프는 모드별 — UC는 컷오프가 없으므로 legacy가 붙지 않는다.
+                    b['legacy'] = not rounds.in_cumulative(label, mode=mode)
                 out.setdefault(label, {})[mode] = block
     return out
 
@@ -162,8 +163,9 @@ def drift(store):
     ★ 참고용 소급 자료(reference=True)는 **추세 계산에서 제외한다.**
       과거 자료는 참고용이며 측정 시점·조건 확인이 불완전할 수 있어 추세 판단 근거로 쓰지 않는다
       (인수인계 §10 T1, 사용자 확정 사항). 제외 후 회차가 3개 미만이면 slope=None.
-    ★ **컷오프(rounds.CUM_START) 이전 회차도 추세에서 제외한다**(사용자 확정 2026-07-28).
-      2025년 6월 이전 측정지는 순도보정 블록·NS 검체·Day 분리 파일 등 **구조가 달라**
+    ★ **컷오프 이전 회차도 추세에서 제외한다**(사용자 확정 2026-07-28).
+      컷오프는 **모드별**이다 — DCM은 `rounds.CUM_START_DCM`(2025.7)부터, **UC는 컷오프 없음**.
+      2025년 6월 이전 **DCM** 측정지는 순도보정 블록·NS 검체·Day 분리 파일 등 구조가 달라
       같은 추세선에 올리면 방법이 다른 값을 잇게 된다(§0). 값은 지우지 않고 분리만 한다.
     x축은 회차 순서(0,1,2…). 회차 3개 미만이면 slope=None으로 두고 추세를 판단하지 않는다.
     |slope| 가 허용한계의 25%/회차를 넘으면 flag — **임의 임계값이며 경고용일 뿐 판정 기준이 아니다.**
@@ -179,7 +181,7 @@ def drift(store):
             if s.get('reference') or r.get('reference'):
                 excluded.append('%s/%s' % (label, mode.upper()))
                 continue
-            if not rounds.in_cumulative(label):
+            if not rounds.in_cumulative(label, mode=mode):
                 excluded_legacy.append('%s/%s' % (label, mode.upper()))
                 continue
             per = {}
@@ -280,14 +282,18 @@ def payload():
     labels = sorted(store, key=rounds._key)
     bs = bias_summary(store)
     ref = [l for l in labels if rounds.is_reference(store.get(l) or {})]
-    cum_labels, legacy_labels = rounds.split_by_cutoff(labels)
+    cum_labels, legacy_labels = rounds.split_by_cutoff(labels, mode='dcm')
+    uc_labels, _ = rounds.split_by_cutoff(labels, mode='uc')
     return {
         'backend': rounds.backend(),
         'round_labels': labels,
         'n_rounds': len(labels),
         'reference_labels': ref,
-        'cum_start': rounds.CUM_START,
-        'cum_labels': cum_labels,
+        'cum_start': rounds.CUM_START_DCM,     # 하위 호환(구 소비처는 DCM 기준)
+        'cum_start_dcm': rounds.CUM_START_DCM,
+        'cum_start_uc': rounds.CUM_START_UC,   # None = 컷오프 없음
+        'cum_labels': cum_labels,              # DCM 누적 대상
+        'cum_labels_uc': uc_labels,            # UC 누적 대상 = 전 회차
         'legacy_labels': legacy_labels,
         'bias_summary': bs,
         'precision': precision(store),
@@ -298,7 +304,9 @@ def payload():
                  '이 통계는 채택에 관여하지 않습니다. 최종 판정은 CDC 참조법 회신 및 검토자 확인 후 확정합니다.'),
         'note_reference': ('참고(소급) 표시가 붙은 회차는 과거 자료를 소급 누적한 것으로 참고용입니다. '
                            '드리프트(추세) 계산에서는 제외되며, 제출·판정 근거로 사용하지 마십시오.'),
-        'note_cutoff': ('누적 추이 분석은 %s 회차부터입니다. 이전 회차는 측정값 엑셀 구조가 달라 '
+        'note_cutoff': ('HDLC-DCM 누적 추이는 %s 회차부터입니다. 이전 회차는 DCM 측정지 구조가 달라 '
                         '(순도보정 블록 분리·NS 검체·Day1/Day2 별도 파일 등) 같은 추세선에 올리지 않고 '
-                        '참고용으로 분리해 표시합니다. 자료를 삭제하지는 않습니다.' % rounds.CUM_START),
+                        '참고용으로 분리해 표시합니다. 자료를 삭제하지는 않습니다. '
+                        'HDLC-UC(BF·LDL-C·HDL-C)는 컷오프 없이 전 회차를 누적합니다.'
+                        % rounds.CUM_START_DCM),
     }

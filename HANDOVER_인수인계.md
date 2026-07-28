@@ -32,13 +32,19 @@
 > 이때는 Claude가 `device_request_folder_access`로 위 clone 폴더 권한을 받아 파일만 직접 쓰고,
 > **마지막 Commit + Push 는 사용자가 GitHub Desktop에서** 눌러야 합니다.
 
-작성일: 2026-07-26 · 최종 갱신: 2026-07-28 · 최신 버전: **v19** (T0–T5·T7 완료 · 누적 컷오프 2025.7~)
+작성일: 2026-07-26 · 최종 갱신: 2026-07-28 · 최신 버전: **v20** (T0–T5·T7 완료 · 누적 컷오프 모드별)
 
 > ### ★ 방법론 핵심 (먼저 읽을 것)
-> **누적 추이 분석은 2025.7 회차부터입니다**(사용자 확정 2026-07-28, UC·DCM 모두).
-> 2025년 6월 이전은 측정지 구조가 달라 그래프에서 분리하고 **참고용으로만** 봅니다.
-> 자료는 삭제하지 않습니다. 컷오프 상수는 **`rounds.CUM_START`와 `dashboard.html`의 `const CUM_START`
-> 두 곳**에 있으니 바꿀 때 반드시 함께 고치십시오(스모크가 불일치를 잡습니다).
+> **누적 추이 분석의 시작 회차는 모드마다 다릅니다**(사용자 확정 2026-07-28).
+>
+> | 계열 | 누적 시작 | 사유 |
+> |---|---|---|
+> | **HDLC-DCM** | **2025.7~** | 2025년 6월 이전 DCM 측정지는 구조가 다름(순도보정 블록 분리·NS 검체·Day 별도 파일) |
+> | **HDLC-UC** (BF·LDL-C·HDL-C) + PS 평가 | **2023.1~ 전 회차** | 위 구조 차이는 **DCM에만** 해당 — 자르지 않음 |
+>
+> 컷오프가 걸린 쪽도 **자료를 삭제하지 않고** 그래프 축에서만 빼며 '참고(구 형식)' 배지로 표시합니다.
+> 상수는 **`rounds.CUM_START_DCM`과 `dashboard.html`의 `const CUM_START_DCM` 두 곳**에 있으니
+> 바꿀 때 반드시 함께 고치십시오(스모크가 불일치를 잡습니다).
 
 ---
 
@@ -442,6 +448,25 @@ HANDOVER_인수인계.md        (이 문서)
     스코프 밖에 `.cum-badge`·`.cum-cut`을 추가했다(스모크에서 검사).
   · 검증: `smoke_headers.py` **248/248**(컷오프 검사 40종 신설), `smoke_gunicorn.sh` **25/25**,
     인라인 JS `node --check` 2/2.
+
+- **v20 (2026-07-28): 누적 컷오프를 모드별로 분리 — UC는 전 회차, DCM만 2025.7~.** ★ v19 과적용 수정
+  · **v19에서 UC까지 함께 자른 것은 과적용이었다.** 컷오프 사유(순도보정 블록·NS 검체·Day 분리 파일)는
+    **DCM 측정지에만** 해당한다. UC(β-정량)는 형식이 이어져 있으므로 자를 근거가 없다.
+    사용자 지적으로 확인하고 되돌렸다 — **UC(BF·LDL-C·HDL-C) 및 PS 평가는 2023.1부터 전 회차 누적.**
+  · `rounds.CUM_START_DCM='2025.7'` / `CUM_START_UC=None`(컷오프 없음) + `cum_start_for(mode)`.
+    `in_cumulative`·`split_by_cutoff`·`split_map_by_cutoff`가 모두 `mode` 인자를 받는다.
+    **기본값은 `'dcm'`** — 컷오프가 있는 쪽을 기본으로 두어 실수로 과거 DCM이 섞이지 않게 했다.
+  · payload: `surveys_uc`(전 회차) / `surveys_cum`(=DCM 2025.7~) 분리, `cum_start_uc`·`cum_start_dcm` 추가.
+    `qc_bias[*].points_*`와 `ps_eval_*`는 **UC 기준**(legacy 비어 있음), `dcm_eval_*`·`dcm_qc_*`는 DCM 기준.
+    구 키 `cum_start`·`surveys_cum`은 **DCM 기준으로 유지**해 하위 호환을 지켰다.
+  · `stats`: `drift`·`bias_summary`가 모드별 컷오프를 적용 — UC 행에는 `legacy`가 붙지 않는다.
+  · 화면: ⑥탭 차트 4개 중 **`cum_dcm`만 별도 축(`survDcm`)**, 나머지 3개(NIST·BF / HDL·LDL / PS)는
+    전 회차 축(`surv`). ②탭 평가 bias·CV 경향은 `DATA.ps_surveys`(전 회차)로 **복원**. ④탭은 DCM이므로 유지.
+  · **[검증] Python↔JS 모드별 판정 교차 검증 125라벨 × 2모드 전부 일치.**
+    UC 2023.1=포함 / DCM 2023.1=제외, UC 2025.1=포함 / DCM 2025.1=제외로 분기 확인.
+  · 회귀 방지: 스모크가 "②탭이 `DATA.ps_surveys`를 그대로 쓰는지", "⑥탭 UC 차트가 `labels:surv`,
+    DCM 차트만 `labels:survDcm`인지"를 **소스 문자열로 검사**한다(UC가 다시 잘리면 실패).
+  · 검증: `smoke_headers.py` **273/273**, `smoke_gunicorn.sh` **25/25**, 인라인 JS `node --check` 2/2.
 
 ## 10. 다음 작업 계획 (2026-07-26 사용자 확정 · 우선순위 순)
 

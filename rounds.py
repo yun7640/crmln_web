@@ -47,36 +47,54 @@ def label_year(label):
     return int(m.group(1)) if m else None
 
 
-# ── 누적 추이 분석 컷오프 ─────────────────────────────────────────────
-# ★ 사용자 확정(2026-07-28): 누적 추이 분석은 **2025.7 회차부터** 시작한다.
-#   2025년 6월 이전(2023.1–2025.1) 회차는 **측정값 엑셀 구조가 달라**(순도보정 블록 별도,
-#   NS01·NS02 검체 존재, Day1/Day2가 별도 파일, 반복 3개 등) 같은 축에 올려 비교하면
-#   방법이 다른 값을 한 추세선으로 잇는 셈이 된다 → §0 위반.
-#   ⇒ **삭제하지 않고 분리 보관**하여 '참고(구 형식)'으로만 표시한다.
-#   적용 범위는 UC·DCM 양쪽 모두(사용자 확정).
-CUM_START = '2025.7'
-CUM_NOTE = ('누적 추이 분석은 %s 회차부터 표시합니다. 이전 회차는 측정값 엑셀 구조가 달라 '
-            '동일한 추세선에 올리지 않으며, 삭제하지 않고 참고용으로 분리해 보관합니다.')
+# ── 누적 추이 분석 컷오프 (★ 모드별로 다르다) ─────────────────────────
+# 사용자 확정(2026-07-28, 2026-07-28 재확정):
+#   · **HDLC-DCM** — 누적 추이는 **2025.7 회차부터**.
+#     2025년 6월 이전 DCM 측정지는 구조가 다르다(순도보정 블록이 원자료와 별도로 쌓임,
+#     NS01·NS02 검체 추가, Day1/Day2가 별도 파일, 반복 3개). 서로 다른 구조의 값을
+#     한 추세선에 이으면 방법이 다른 값을 잇는 셈이 된다 → §0 위반.
+#   · **HDLC-UC(BF·LDL-C·HDL-C)** — **컷오프 없음. 2023.1부터 전 회차 누적.**
+#     ★ 위 구조 차이는 DCM 측정지에만 해당한다. UC는 형식이 이어져 있으므로 자르지 않는다.
+#       (v19에서 UC까지 함께 잘랐던 것은 과적용이었고 v20에서 되돌렸다.)
+#   ⇒ 컷오프가 적용되는 쪽도 **삭제하지 않고 분리 보관**해 '참고(구 형식)'으로 표시한다.
+CUM_START_DCM = '2025.7'
+CUM_START_UC = None            # None = 컷오프 없음(전 회차 누적)
+CUM_START = CUM_START_DCM      # 하위 호환(구 이름). 기본은 DCM 기준이다.
+CUM_NOTE = ('HDLC-DCM 누적 추이는 %s 회차부터 표시합니다. 이전 회차는 DCM 측정지 구조가 달라 '
+            '동일한 추세선에 올리지 않으며, 삭제하지 않고 참고용으로 분리해 보관합니다. '
+            'HDLC-UC(BF·LDL-C·HDL-C)는 컷오프 없이 전 회차를 누적합니다.')
 
 
-def in_cumulative(label, start=None):
-    """누적 추이 분석에 포함할 회차인지 판정. 컷오프 이전은 '참고(구 형식)'로 분리한다."""
-    return _key(canon_label(label)) >= _key(start or CUM_START)
+def cum_start_for(mode='dcm'):
+    """모드별 누적 시작 회차. UC는 None(전 회차), DCM은 '2025.7'."""
+    return CUM_START_UC if str(mode or '').lower() == 'uc' else CUM_START_DCM
 
 
-def split_by_cutoff(labels, start=None):
+def in_cumulative(label, start=None, mode='dcm'):
+    """누적 추이 분석에 포함할 회차인지 판정.
+
+    ★ mode를 반드시 넘길 것 — UC는 컷오프가 없고 DCM만 2025.7~이다.
+      (기본값이 'dcm'인 이유: 컷오프가 있는 쪽을 기본으로 두어 실수로 과거 DCM이 섞이지 않게 한다)
+    start를 직접 주면 모드보다 우선한다."""
+    s = start if start is not None else cum_start_for(mode)
+    if not s:
+        return True
+    return _key(canon_label(label)) >= _key(s)
+
+
+def split_by_cutoff(labels, start=None, mode='dcm'):
     """라벨 목록을 (누적 대상, 참고=컷오프 이전)으로 나눈다. 양쪽 다 회차순 정렬."""
     cum, legacy = [], []
     for lab in sorted({str(l) for l in (labels or [])}, key=_key):
-        (cum if in_cumulative(lab, start) else legacy).append(lab)
+        (cum if in_cumulative(lab, start, mode) else legacy).append(lab)
     return cum, legacy
 
 
-def split_map_by_cutoff(mapping, start=None):
+def split_map_by_cutoff(mapping, start=None, mode='dcm'):
     """{라벨: 값} 딕셔너리를 (누적 대상, 참고) 두 딕셔너리로 나눈다."""
     cum, legacy = {}, {}
     for lab, val in (mapping or {}).items():
-        (cum if in_cumulative(lab, start) else legacy)[lab] = val
+        (cum if in_cumulative(lab, start, mode) else legacy)[lab] = val
     return cum, legacy
 
 
@@ -400,8 +418,9 @@ def dashboard_payload():
                                   'reference': is_reference(r)})
     conflicts.sort(key=lambda c: (_key(c['label']), c['analyte']))
     # 컷오프 분리 — 값은 그대로 두고 '누적 대상'과 '참고(구 형식)'로만 나눈다(§0: 삭제하지 않음).
+    # ★ qc_bias(NIST·BF·HDL·LDL)는 **UC 계열**이므로 컷오프가 없다 → points_cum = 전 회차.
     for an in qc_bias:
-        cum, legacy = split_map_by_cutoff(qc_bias[an]['points'])
+        cum, legacy = split_map_by_cutoff(qc_bias[an]['points'], mode='uc')
         qc_bias[an]['points_cum'] = cum
         qc_bias[an]['points_legacy'] = legacy
 
@@ -434,10 +453,12 @@ def dashboard_payload():
         uploaded[label] = {'label': label, 'date': r.get('date', ''),
                            'uc': r.get('uc'), 'dcm': r.get('dcm'), 'reference': ref}
 
-    surveys_cum, surveys_legacy = split_by_cutoff(surveys)
-    ps_cum, ps_legacy = split_map_by_cutoff(seed.get('ps_eval', {}))
-    dcm_ev_cum, dcm_ev_legacy = split_map_by_cutoff(seed.get('dcm_eval', {}))
-    dcm_qc_cum, dcm_qc_legacy = split_map_by_cutoff(dcm_qc)
+    # ★ 모드별 컷오프 — UC는 전 회차, DCM만 2025.7~.
+    surveys_uc, _ = split_by_cutoff(surveys, mode='uc')            # = 전 회차
+    surveys_cum, surveys_legacy = split_by_cutoff(surveys, mode='dcm')
+    ps_cum, ps_legacy = split_map_by_cutoff(seed.get('ps_eval', {}), mode='uc')      # PS 평가 = UC 계열
+    dcm_ev_cum, dcm_ev_legacy = split_map_by_cutoff(seed.get('dcm_eval', {}), mode='dcm')
+    dcm_qc_cum, dcm_qc_legacy = split_map_by_cutoff(dcm_qc, mode='dcm')
 
     return {
         'surveys': surveys,
@@ -454,12 +475,19 @@ def dashboard_payload():
         'reference_labels': reference_labels,
         'conflicts': conflicts,
         'backfill': {'min_year': min_backfill_year(), 'years': BACKFILL_YEARS},
-        # ── 누적 컷오프(2025.7~) ──────────────────────────────────────
+        # ── 누적 컷오프 (★ 모드별) ────────────────────────────────────
         # 값 자체는 위 계열에 그대로 남아 있고, 아래는 **표시 분리용** 이다.
-        'cum_start': CUM_START,
-        'cum_note': CUM_NOTE % CUM_START,
-        'surveys_cum': surveys_cum,
+        #   UC(BF·LDL·HDL, PS 평가) → 컷오프 없음(2023.1~ 전 회차)
+        #   DCM                      → 2025.7~
+        'cum_start': CUM_START_DCM,          # 하위 호환(구 소비처는 DCM 기준으로 읽었다)
+        'cum_start_dcm': CUM_START_DCM,
+        'cum_start_uc': CUM_START_UC,
+        'cum_note': CUM_NOTE % CUM_START_DCM,
+        'surveys_uc': surveys_uc,            # UC 그래프 축 = 전 회차
+        'surveys_cum': surveys_cum,          # DCM 그래프 축 = 2025.7~
+        'surveys_cum_dcm': surveys_cum,
         'surveys_legacy': surveys_legacy,
+        'surveys_legacy_dcm': surveys_legacy,
         'ps_eval_cum': ps_cum, 'ps_eval_legacy': ps_legacy,
         'dcm_eval_cum': dcm_ev_cum, 'dcm_eval_legacy': dcm_ev_legacy,
         'dcm_qc_cum': dcm_qc_cum, 'dcm_qc_legacy': dcm_qc_legacy,

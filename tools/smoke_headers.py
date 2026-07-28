@@ -169,59 +169,102 @@ def main():
           dp.get('total') == sum((dp.get('counts') or {}).values()), dp)
     check('통계 note에 방법론 경고 포함', '판정' in (S.get('note') or ''), S.get('note'))
 
-    print('[6d] 누적 추이 컷오프 (2025.7~) — 사용자 확정 2026-07-28')
+    print('[6d] 누적 추이 컷오프 — ★ 모드별(UC 전 회차 / DCM 2025.7~)')
     import rounds as R0  # noqa: E402
-    check('rounds.CUM_START = 2025.7', R0.CUM_START == '2025.7', R0.CUM_START)
-    # 경계: 2025.1은 제외, 2025.7은 포함. 2024.12는 '2024 하반기'라 제외.
+    check('rounds.CUM_START_DCM = 2025.7', R0.CUM_START_DCM == '2025.7', R0.CUM_START_DCM)
+    check('rounds.CUM_START_UC = None(컷오프 없음)', R0.CUM_START_UC is None, R0.CUM_START_UC)
+    check('cum_start_for 모드 분기',
+          R0.cum_start_for('uc') is None and R0.cum_start_for('dcm') == '2025.7',
+          (R0.cum_start_for('uc'), R0.cum_start_for('dcm')))
+    # DCM 경계: 2025.1 제외 / 2025.7 포함. 2024.12는 '2024 하반기'라 제외.
     for lab, exp in (('2023.1', False), ('2024.7', False), ('2024.12', False), ('2025.1', False),
                      ('2025.7', True), ('2025-07-01', True), ('2026.1', True), ('2026.7', True)):
-        check('in_cumulative(%s)=%s' % (lab, exp), R0.in_cumulative(lab) is exp, lab)
-    cum, leg = R0.split_by_cutoff(['2023.1', '2025.1', '2025.7', '2026.7'])
-    check('split_by_cutoff 분리', cum == ['2025.7', '2026.7'] and leg == ['2023.1', '2025.1'], (cum, leg))
-    for k in ('cum_start', 'cum_labels', 'legacy_labels', 'note_cutoff'):
-        check('stats.%s 존재' % k, k in S, sorted(S)[:14])
-    check('stats.cum_start 일치', S.get('cum_start') == R0.CUM_START, S.get('cum_start'))
+        check('DCM in_cumulative(%s)=%s' % (lab, exp),
+              R0.in_cumulative(lab, mode='dcm') is exp, lab)
+    # ★ UC는 컷오프가 없다 — 과거 회차도 전부 포함되어야 한다(v19 과적용 회귀 방지)
+    for lab in ('2023.1', '2023.7', '2024.1', '2024.7', '2025.1', '2025.7', '2026.7'):
+        check('UC in_cumulative(%s)=True' % lab, R0.in_cumulative(lab, mode='uc') is True, lab)
+    cum, leg = R0.split_by_cutoff(['2023.1', '2025.1', '2025.7', '2026.7'], mode='dcm')
+    check('split_by_cutoff(dcm) 분리', cum == ['2025.7', '2026.7'] and leg == ['2023.1', '2025.1'], (cum, leg))
+    cum_uc, leg_uc = R0.split_by_cutoff(['2023.1', '2025.1', '2025.7'], mode='uc')
+    check('split_by_cutoff(uc)는 자르지 않음', leg_uc == [] and len(cum_uc) == 3, (cum_uc, leg_uc))
+    for k in ('cum_start', 'cum_start_uc', 'cum_start_dcm', 'cum_labels', 'cum_labels_uc',
+              'legacy_labels', 'note_cutoff'):
+        check('stats.%s 존재' % k, k in S, sorted(S)[:16])
+    check('stats.cum_start 일치', S.get('cum_start') == R0.CUM_START_DCM, S.get('cum_start'))
     D = c.get('/rounds/data').get_json(silent=True) or {}
-    for k in ('cum_start', 'cum_note', 'surveys_cum', 'surveys_legacy',
+    for k in ('cum_start', 'cum_start_uc', 'cum_start_dcm', 'cum_note',
+              'surveys_uc', 'surveys_cum', 'surveys_legacy',
               'ps_eval_cum', 'ps_eval_legacy', 'dcm_eval_cum', 'dcm_eval_legacy',
               'dcm_qc_cum', 'dcm_qc_legacy'):
-        check('/rounds/data.%s 존재' % k, k in D, sorted(D)[:16])
-    check('surveys_cum은 컷오프 이후만',
-          all(R0.in_cumulative(s) for s in D.get('surveys_cum') or []), D.get('surveys_cum'))
-    check('surveys_legacy는 컷오프 이전만',
-          all(not R0.in_cumulative(s) for s in D.get('surveys_legacy') or []), D.get('surveys_legacy'))
+        check('/rounds/data.%s 존재' % k, k in D, sorted(D)[:18])
+    check('surveys_cum(DCM)은 컷오프 이후만',
+          all(R0.in_cumulative(s, mode='dcm') for s in D.get('surveys_cum') or []), D.get('surveys_cum'))
+    check('surveys_legacy(DCM)는 컷오프 이전만',
+          all(not R0.in_cumulative(s, mode='dcm') for s in D.get('surveys_legacy') or []),
+          D.get('surveys_legacy'))
+    # ★ UC 축은 전 회차 — 2023.1이 반드시 살아 있어야 한다
+    check('surveys_uc는 전 회차(2023.1 포함)',
+          '2023.1' in (D.get('surveys_uc') or []) and
+          set(D.get('surveys_uc') or []) == set(D.get('surveys') or []), D.get('surveys_uc'))
     check('컷오프로 자료를 삭제하지 않음(surveys 원본 유지)',
           set(D.get('surveys_cum') or []) | set(D.get('surveys_legacy') or []) == set(D.get('surveys') or []),
           (D.get('surveys'), D.get('surveys_cum'), D.get('surveys_legacy')))
-    check('시드 과거 회차가 legacy로 분리됨(2023.1)',
+    check('DCM 시드 과거 회차가 legacy로 분리됨(2023.1)',
           '2023.1' in (D.get('surveys_legacy') or []), D.get('surveys_legacy'))
     qb = (D.get('qc_bias') or {}).get('HDL') or {}
     check('qc_bias에 points_cum·points_legacy 분리',
           'points_cum' in qb and 'points_legacy' in qb, sorted(qb))
+    # ★ qc_bias는 UC 계열 → legacy가 비어 있어야 한다(2023.1부터 전부 누적)
+    check('qc_bias(UC)는 잘리지 않음 — legacy 비어 있음',
+          not (qb.get('points_legacy') or {}) and '2023.1' in (qb.get('points_cum') or {}),
+          (sorted(qb.get('points_cum') or {}), sorted(qb.get('points_legacy') or {})))
     check('qc_bias 원본 points는 그대로 보존',
           set(qb.get('points_cum') or {}) | set(qb.get('points_legacy') or {}) == set(qb.get('points') or {}),
           (sorted(qb.get('points') or {}), sorted(qb.get('points_cum') or {})))
-    # drift는 컷오프 이전 회차를 추세에서 빼야 한다(값은 bias_summary에 legacy 표시로 남는다)
-    fake = {'2024.7': {'dcm': {'qc': [{'analyte': 'HDL', 'name': 'HDL C', 'day': 1,
-                                       'biasmgdl': -0.5, 'biaspct': -1.0}], 'samples': []}},
-            '2025.7': {'dcm': {'qc': [{'analyte': 'HDL', 'name': 'HDL C', 'day': 1,
-                                       'biasmgdl': 0.1, 'biaspct': 0.2}], 'samples': []}}}
+    check('ps_eval(UC 계열)도 잘리지 않음', not (D.get('ps_eval_legacy') or {}), D.get('ps_eval_legacy'))
+    check('dcm_eval(DCM)은 잘림', '2023.1' in (D.get('dcm_eval_legacy') or {}), sorted(D.get('dcm_eval_legacy') or {}))
+    # drift는 컷오프 이전 DCM 회차를 추세에서 빼되, UC는 전부 살려야 한다
+    def _q(an, v):
+        return {'qc': [{'analyte': an, 'name': 'QC', 'day': 1, 'biasmgdl': v, 'biaspct': v}], 'samples': []}
+    fake = {'2023.1': {'uc': _q('HDL', 0.3), 'dcm': _q('HDL', -0.5)},
+            '2024.7': {'uc': _q('HDL', 0.2), 'dcm': _q('HDL', -0.4)},
+            '2025.7': {'uc': _q('HDL', 0.1), 'dcm': _q('HDL', 0.1)},
+            '2026.1': {'uc': _q('HDL', 0.0), 'dcm': _q('HDL', -1.0)}}
     import stats as ST  # noqa: E402
     dr2 = ST.drift(fake)
-    check('drift가 컷오프 이전 회차를 제외',
-          (dr2.get('dcm', {}).get('HDL', {}).get('labels') or []) == ['2025.7'], dr2)
-    check('drift에 제외 목록 기록', '2024.7/DCM' in (dr2.get('_excluded_legacy') or []), dr2.get('_excluded_legacy'))
+    check('drift(DCM)는 컷오프 이전 제외',
+          (dr2.get('dcm', {}).get('HDL', {}).get('labels') or []) == ['2025.7', '2026.1'], dr2.get('dcm'))
+    check('drift(UC)는 전 회차 사용',
+          (dr2.get('uc', {}).get('HDL', {}).get('labels') or [])
+          == ['2023.1', '2024.7', '2025.7', '2026.1'], dr2.get('uc'))
+    check('drift 제외 목록은 DCM만', set(dr2.get('_excluded_legacy') or []) == {'2023.1/DCM', '2024.7/DCM'},
+          dr2.get('_excluded_legacy'))
     bs2 = ST.bias_summary(fake)
-    check('bias_summary는 값을 지우지 않고 legacy 표시만',
-          bs2['2024.7']['dcm']['HDL']['legacy'] is True
-          and bs2['2025.7']['dcm']['HDL']['legacy'] is False
-          and bs2['2024.7']['dcm']['HDL']['mean'] == -0.5, bs2)
+    check('bias_summary: DCM 과거는 legacy 표시, 값은 보존',
+          bs2['2023.1']['dcm']['HDL']['legacy'] is True
+          and bs2['2023.1']['dcm']['HDL']['mean'] == -0.5, bs2['2023.1']['dcm'])
+    check('bias_summary: UC 과거는 legacy 아님',
+          bs2['2023.1']['uc']['HDL']['legacy'] is False, bs2['2023.1']['uc'])
     # 화면(JS)과 서버(Python)의 컷오프 판정이 어긋나면 안 된다 — 상수 동기화 확인
     _dash = open(os.path.join(ROOT, 'private', 'dashboard.html'), encoding='utf-8').read()
-    check("dashboard.html의 CUM_START가 서버와 동일",
-          ("const CUM_START='%s'" % R0.CUM_START) in _dash,
-          [l for l in _dash.splitlines() if 'CUM_START=' in l][:1])
-    for _id in ('cumCutNote', 'evalCutNote', 'evalCVCutNote', 'dcmRelCutNote'):
+    check("dashboard.html의 CUM_START_DCM이 서버와 동일",
+          ("const CUM_START_DCM='%s'" % R0.CUM_START_DCM) in _dash,
+          [l for l in _dash.splitlines() if 'CUM_START_DCM=' in l][:1])
+    check("dashboard.html의 CUM_START_UC도 컷오프 없음",
+          'const CUM_START_UC=null' in _dash,
+          [l for l in _dash.splitlines() if 'CUM_START_UC' in l][:1])
+    # ★ UC 그래프가 다시 잘리는 회귀 방지 — 평가 경향은 DATA.ps_surveys(전 회차)를 그대로 써야 한다
+    check('②탭 평가 bias 경향이 전 회차 축 사용',
+          'function evalTrendChart(an){const surv=DATA.ps_surveys;' in _dash)
+    check('②탭 평가 CV 경향이 전 회차 축 사용',
+          'function evalCVChart(an){const surv=DATA.ps_surveys;' in _dash)
+    check('⑥탭 DCM 차트만 별도 축(survDcm) 사용',
+          "mk('cum_dcm',{type:'line',data:{labels:survDcm," in _dash)
+    check('⑥탭 UC 차트는 전 회차 축(surv) 사용',
+          "mk('cum_tcbf',{type:'line',data:{labels:surv," in _dash
+          and "mk('cum_hdlldl',{type:'line',data:{labels:surv," in _dash)
+    for _id in ('cumDcmCutNote', 'dcmRelCutNote'):
         check('컷오프 안내 컨테이너 %s' % _id, _dash.count(_id) >= 2, _dash.count(_id))
     check('컷오프 배지 CSS가 #t6 스코프 밖에도 정의됨',
           '\n  .cum-badge{' in _dash, '#t6 스코프에만 있으면 ②·④탭에서 색이 안 나온다')

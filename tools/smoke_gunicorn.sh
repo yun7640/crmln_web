@@ -124,7 +124,13 @@ else:
     check('/rounds/add 200 (한글 헤더 500 아님)', r.status == 200, r.status)
     latin1_ok(r, '/rounds/add')
     body = r.read()
-    check('엑셀(zip) 반환', body[:2] == b'PK', body[:8])
+    # ★ 2026-07-28: /rounds/add 는 누적 저장만 하고 **JSON**을 돌려준다.
+    #   검토 엑셀 생성은 왼쪽 자동검토(/review) 전용이다. 예전처럼 zip(PK)이 오면 회귀다.
+    check('JSON 반환(검토 엑셀 아님)', body[:1] == b'{' and body[:2] != b'PK', body[:16])
+    jb = json.loads(body.decode('utf-8'))
+    check('review_file=False 명시', jb.get('review_file') is False, jb)
+    check('본문 stored=True', jb.get('stored') is True, jb)
+    check('본문에 자동검토 안내', '자동 검토' in str(jb.get('note','')), jb.get('note'))
     xrr = r.getheader('X-Round-Result')
     check('X-Round-Result 존재', bool(xrr))
     if xrr:

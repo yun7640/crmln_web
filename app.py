@@ -186,9 +186,13 @@ def rounds_preview():
 @app.route('/rounds/add', methods=['POST'])
 @login_required
 def rounds_add():
-    """측정 파일 업로드 → 회차 저장(누적) + 제출 검토 파일 생성·반환(한 번에).
+    """측정 파일 업로드 → 회차 **누적 저장만** 하고 JSON을 반환한다.
 
-    reference=1 이면 과거 자료 소급 누적(참고용)으로 저장하고, 검토 엑셀은 만들지 않는다."""
+    ★ 사용자 확정(2026-07-28): **검토 파일 생성은 왼쪽 '자동 검토' 패널(/review)에서만** 한다.
+      ⑥탭 회차 누적분석은 **QC bias 경향성 분석 전용**이다.
+      사유 — 이미 CRMLN에 제출한 회차는 선택 결과를 다시 검토할 필요가 없다.
+      (종전에는 여기서 검토 엑셀까지 만들어 돌려주었다. 그 경로를 제거했다.)
+    reference=1 이면 과거 자료 소급 누적(참고용)으로 저장한다 — 반환 형태는 동일하다."""
     f = request.files.get('file')
     label = (request.form.get('label') or '').strip()
     reference = _truthy(request.form.get('reference'))
@@ -211,30 +215,18 @@ def rounds_add():
                                reference=reference, date_certain=date_certain)
     if not ok:
         return {'error': msg}, 400 if reference else 500
+    body = {'stored': True, 'label': rounds.canon_label(label), 'mode': summary['mode'],
+            'n_samples': summary.get('n_samples'), 'n_exceed': summary.get('n_exceed'),
+            'message': msg, 'review_file': False,
+            'note': '누적 저장만 했습니다. 검토 파일이 필요하면 왼쪽 "자동 검토" 패널을 사용하십시오.'}
     if reference:
-        # 소급은 누적 저장이 목적 — 검토 엑셀은 만들지 않는다(사용자 확정 사항).
         cmp_ = rounds.seed_compare(label, summary)
-        return app.response_class(json.dumps({
-            'stored': True, 'reference': True, 'label': rounds.canon_label(label),
-            'mode': summary['mode'], 'message': msg, 'seed_compare': cmp_,
-            'warn': ('시드 값과 다른 항목이 %d개 있습니다. 덮어쓰지 않고 병기합니다.' % cmp_['n_diff'])
-                    if cmp_['n_diff'] else '',
-        }, ensure_ascii=False), mimetype='application/json')
-    # 제출 검토 파일도 함께 생성해 반환
-    try:
-        # 여기서는 사용자가 확정한 라벨이 있으므로 추정하지 않고 그대로 쓴다(T7).
-        out_bytes, rsum = review_engine.process(
-            data, filename=f.filename, label=rounds.canon_label(label))
-    except Exception:
-        # 저장은 되었으니 파일 생성 실패해도 상태는 알림
-        return {'stored': True, 'label': label, 'mode': summary['mode'],
-                'summary': summary, 'message': msg,
-                'warn': '저장은 완료. 검토 파일 생성은 건너뜀.'}
-    bio = io.BytesIO(out_bytes)
-    name = os.path.splitext(f.filename)[0] + '_검토.xlsx'
-    resp = send_file(bio, as_attachment=True, download_name=name,
-                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        body.update({'reference': True, 'seed_compare': cmp_,
+                     'warn': ('시드 값과 다른 항목이 %d개 있습니다. 덮어쓰지 않고 병기합니다.'
+                              % cmp_['n_diff']) if cmp_['n_diff'] else ''})
+    resp = app.response_class(json.dumps(body, ensure_ascii=False), mimetype='application/json')
     # HTTP 헤더는 latin-1만 허용 → 한글은 \uXXXX(ASCII)로 인코딩(JS JSON.parse가 복원).
+    # 본문이 JSON이 된 뒤에도 기존 화면이 이 헤더를 읽으므로 그대로 둔다.
     resp.headers['X-Round-Result'] = json.dumps(
         {'stored': True, 'label': label, 'mode': summary['mode'],
          'n_samples': summary.get('n_samples'), 'n_exceed': summary.get('n_exceed'),

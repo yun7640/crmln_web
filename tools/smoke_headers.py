@@ -269,6 +269,35 @@ def main():
     check('컷오프 배지 CSS가 #t6 스코프 밖에도 정의됨',
           '\n  .cum-badge{' in _dash, '#t6 스코프에만 있으면 ②·④탭에서 색이 안 나온다')
 
+    print('[6e] ⑥탭은 QC 경향 전용 — 검토파일 생성 없음 (사용자 확정 2026-07-28)')
+    with open(dcm_path, 'rb') as f:
+        r = c.post('/rounds/add', data={'file': (f, '경향용_DCM.xlsx'), 'label': '2027.7'},
+                   content_type='multipart/form-data')
+    check('/rounds/add 200', r.status_code == 200, r.status_code)
+    assert_latin1_headers(r, '/rounds/add(경향 전용)')
+    check('/rounds/add는 JSON 반환(엑셀 아님)',
+          r.mimetype == 'application/json' and r.data[:1] == b'{', (r.mimetype, r.data[:12]))
+    check('검토 엑셀(zip) 아님 — 회귀 감시', r.data[:2] != b'PK', r.data[:8])
+    jb = r.get_json(silent=True) or {}
+    check('review_file=False 명시', jb.get('review_file') is False, jb)
+    check('저장은 정상 수행', jb.get('stored') is True, jb)
+    check('본문에 자동검토 패널 안내', '자동 검토' in str(jb.get('note') or ''), jb.get('note'))
+    check('첨부 다운로드 헤더 없음',
+          'attachment' not in str(r.headers.get('Content-Disposition') or ''),
+          r.headers.get('Content-Disposition'))
+    check('X-Round-Result 헤더는 유지', bool(r.headers.get('X-Round-Result')))
+    c.post('/rounds/delete', data={'label': '2027.7', 'ajax': '1'})
+    # /review(왼쪽 자동검토)는 종전대로 검토 엑셀을 만들어야 한다
+    with open(dcm_path, 'rb') as f:
+        r = c.post('/review', data={'file': (f, '자동검토_DCM.xlsx')},
+                   content_type='multipart/form-data')
+    check('/review는 검토 엑셀을 계속 생성', r.status_code == 200 and r.data[:2] == b'PK',
+          (r.status_code, r.data[:8]))
+    check('⑥탭 버튼 문구에서 검토파일 제거',
+          '회차 추가 (누적 저장)' in _dash and '회차 추가 · 검토파일 생성' not in _dash)
+    check('⑥탭 화면에 QC 경향 전용 안내',
+          'QC bias 경향성 분석 전용' in _dash and "왼쪽 '자동 검토' 패널" in _dash)
+
     print('[6c] T1 과거 회차 소급 누적 — 라벨 추정·연도 제한·시드 병기')
     import rounds as R  # noqa: E402
     # (1) 라벨 자동 추정: 파일명·시트명에서만 추정하며 저장하지 않는다

@@ -356,6 +356,56 @@ def main():
     check('⑦탭 초기화 훅 연결', 'window.initSel' in _dash and "b.dataset.tab==='t7'" in _dash)
     check('⑦탭에 기록 전용 경고', '이 표는 기록 전용입니다' in _dash)
 
+    print('[6g] ⑦탭 이상치 판정 기준(선택 옵션) — ①·④탭 목록과 동기화')
+    C = P.get('criteria') or {}
+    check('criteria에 uc·dcm 목록', set(C) == {'uc', 'dcm'}, sorted(C))
+    check('UC 기준 10종', len(C.get('uc') or []) == 10, len(C.get('uc') or []))
+    check('DCM 기준 4종', len(C.get('dcm') or []) == 4, len(C.get('dcm') or []))
+    check('기본값 uc=combo / dcm=median',
+          (P.get('criteria_default') or {}) == {'uc': 'combo', 'dcm': 'median'},
+          P.get('criteria_default'))
+    # ★ 정본은 rounds.SEL_CRITERIA — ①탭(#selCrit)·④탭(#dcmSelCrit) 인라인 option과 어긋나면 안 된다.
+    #   어긋나면 ⑦탭에서 고른 기준이 실제 화면 기준과 달라져 기록이 무의미해진다.
+    import re as _re  # noqa: E402
+    def _screen_opts(sel_id):
+        m = _re.search(r'<select[^>]*id="%s"(.*?)</select>' % sel_id, _dash, _re.S)
+        return _re.findall(r'<option value="([^"]+)"', m.group(1)) if m else []
+    for sel_id, mode in (('selCrit', 'uc'), ('dcmSelCrit', 'dcm')):
+        want = [x['value'] for x in C.get(mode) or []]
+        check('%s(%s) 화면 옵션 = 서버 목록' % (sel_id, mode), _screen_opts(sel_id) == want,
+              (_screen_opts(sel_id), want))
+    # 민감도(방향성) 표시 — §0 경고 대상
+    _uc_sens = {x['value'] for x in (C.get('uc') or []) if x.get('sensitivity')}
+    check('UC 방향성 4종이 민감도로 표시',
+          _uc_sens == {'hdl_high', 'hdl_low', 'bf_high', 'bf_low'}, sorted(_uc_sens))
+    check('DCM 기본(median)은 민감도 아님',
+          not [x for x in (C.get('dcm') or []) if x['value'] == 'median' and x.get('sensitivity')])
+    # 저장·조회 왕복 — 기준이 함께 남아야 한다
+    r = c.post('/selections/save', json={'label': '2026.7', 'mode': 'dcm', 'criterion': 'minpair',
+                                         'samples': {'CS01': {'1': {'keep': ['R1', 'R2']}}}})
+    check('기준 지정 저장 200', r.status_code == 200, r.data[:200])
+    rec = (((c.get('/selections').get_json(silent=True) or {}).get('selections') or {})
+           .get('2026.7') or {}).get('dcm') or {}
+    check('선택 기준 저장됨', rec.get('criterion') == 'minpair', rec)
+    check('기준 표시문구 함께 저장', '최소분산쌍' in str(rec.get('criterion_label') or ''), rec)
+    check('민감도 플래그 저장', rec.get('sensitivity') is True, rec)
+    r = c.post('/selections/save', json={'label': '2026.7', 'mode': 'dcm',
+                                         'samples': {'CS01': {'1': {'keep': ['R1', 'R2']}}}})
+    rec2 = (((c.get('/selections').get_json(silent=True) or {}).get('selections') or {})
+            .get('2026.7') or {}).get('dcm') or {}
+    check('기준 생략 시 모드 기본값(median)', rec2.get('criterion') == 'median', rec2)
+    check('기본값은 민감도 아님', rec2.get('sensitivity') is False, rec2)
+    rr = c.post('/selections/save', json={'label': '2026.7', 'mode': 'dcm', 'criterion': 'bf_high',
+                                          'samples': {}})
+    check('타 모드 기준 거부(DCM에 bf_high 없음)', rr.status_code == 400, rr.status_code)
+    assert_latin1_headers(rr, '/selections/save(잘못된 기준)')
+    check('없는 기준 값 거부',
+          c.post('/selections/save', json={'label': '2026.7', 'mode': 'uc',
+                                           'criterion': 'zzz', 'samples': {}}).status_code == 400)
+    check('⑦탭 기준 드롭다운·경고 DOM', 'selCrit2' in _dash and 'selCritWarn' in _dash)
+    check('⑦탭이 서버 목록으로 드롭다운 생성', 'SEL.data&&SEL.data.criteria' in _dash)
+    check('민감도 선택 시 경고 문구', '방향성(민감도) 기준입니다' in _dash)
+
     print('[6c] T1 과거 회차 소급 누적 — 라벨 추정·연도 제한·시드 병기')
     import rounds as R  # noqa: E402
     # (1) 라벨 자동 추정: 파일명·시트명에서만 추정하며 저장하지 않는다

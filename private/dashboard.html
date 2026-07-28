@@ -510,9 +510,12 @@ td .st,.st{display:inline-flex;align-items:center;gap:4px;font-weight:700;font-s
     <div class="cum-fld"><label>회차</label><input class="cum-in" type="text" id="selLabel" placeholder="예: 2026.7" size="9"></div>
     <div class="cum-fld"><label>측정법</label>
       <select class="cum-in" id="selMode"><option value="dcm">HDLC-DCM</option><option value="uc">HDLC-UC</option></select></div>
+    <div class="cum-fld"><label>이상치 판정 기준 · 우선순위</label>
+      <select class="cum-in" id="selCrit2" style="min-width:260px"></select></div>
     <button class="cum-btn" id="selLoad">불러오기</button>
     <button class="cum-btn" id="selSave" disabled>선택 기준 저장</button>
   </div>
+  <div id="selCritWarn"></div>
   <div class="cum-stat" id="selStat"></div>
 
   <p class="panel-title" style="margin-top:14px">검체 · Day별 채택 반복</p>
@@ -1448,6 +1451,36 @@ buildHero();buildQCTable();buildPrecTable();buildEvalTable();renderAll();
     var s=((SEL.data&&SEL.data.selections)||{})[label]||{};
     return (s[mode]||{}).samples||{};
   }
+  function savedRec(label,mode){
+    var s=((SEL.data&&SEL.data.selections)||{})[label]||{};
+    return s[mode]||{};
+  }
+  /* 선택 기준 드롭다운은 **서버 목록(/selections.criteria)** 으로 만든다.
+     ①·④탭 인라인 <option>과 값이 어긋나지 않도록 정본을 한 곳에 둔 것이다. */
+  function buildCrit(){
+    var mode=el('selMode').value,list=((SEL.data&&SEL.data.criteria)||{})[mode]||[],
+        sel=el('selCrit2'),cur=(SEL.data&&SEL.data.criteria_default||{})[mode]||'';
+    var label=(el('selLabel').value||'').trim();
+    if(label&&savedRec(label,mode).criterion)cur=savedRec(label,mode).criterion;
+    var h='',g=null;
+    list.forEach(function(c){
+      if(c.group!==g){if(g!==null)h+='</optgroup>';h+='<optgroup label="'+esc(c.group)+'">';g=c.group;}
+      h+='<option value="'+esc(c.value)+'"'+(c.value===cur?' selected':'')+'>'+esc(c.label)+'</option>';
+    });
+    if(g!==null)h+='</optgroup>';
+    sel.innerHTML=h;
+    critWarn();
+  }
+  /* 방향성(민감도) 기준을 고르면 경고를 띄운다 — 결과를 유리하게 만들기 위한 선택은 지양(§0) */
+  function critWarn(){
+    var mode=el('selMode').value,v=el('selCrit2').value,
+        list=((SEL.data&&SEL.data.criteria)||{})[mode]||[],hit=null;
+    list.forEach(function(c){if(c.value===v)hit=c;});
+    el('selCritWarn').innerHTML=(hit&&hit.sensitivity)
+      ? '<p class="note cum-cut"><b>⚠ 방향성(민감도) 기준입니다.</b> '
+        +esc(((SEL.data||{}).note_sensitivity)||'what-if 분석용이며 결과를 유리하게 만들기 위한 선택은 지양합니다.')
+        +'</p>' : '';
+  }
   function renderGrid(){
     var label=(el('selLabel').value||'').trim(),mode=el('selMode').value,host=el('selGrid');
     if(!label){host.innerHTML='<p class="note">회차를 입력한 뒤 <b>불러오기</b>를 누르십시오.</p>';
@@ -1505,7 +1538,11 @@ buildHero();buildQCTable();buildPrecTable();buildEvalTable();renderAll();
         var rec=(sels[lab]||{})[mode];if(!rec||!rec.samples)return;
         h+='<p class="panel-sub" style="font-weight:700;margin-top:10px">'+esc(lab)
           +' <span class="cum-badge">'+(mode==='dcm'?'HDLC-DCM':'HDLC-UC')+'</span>'
+          +(rec.criterion_label?(' <span class="cum-badge">'+esc(rec.criterion_label)+'</span>'):'')
+          +(rec.sensitivity?' <span class="cum-badge cum-flag">⚠ 민감도 기준</span>':'')
           +(rec.saved_at?(' <span class="cum-legend">'+esc(rec.saved_at)+(rec.by?(' · '+esc(rec.by)):'')+'</span>'):'')+'</p>';
+        if(rec.sensitivity)h+='<p class="cum-legend cum-warn">이 회차는 <b>방향성(민감도) 기준</b>으로 기록되었습니다. '
+          +'what-if 분석용이며 결과를 유리하게 만들기 위한 선택은 지양합니다(§0).</p>';
         if(rec.note)h+='<p class="cum-legend">메모: '+esc(rec.note)+'</p>';
         h+='<table class="cum-sub"><thead><tr><th>검체</th><th>Day1 채택</th><th>Day1 사유</th>'
           +'<th>Day2 채택</th><th>Day2 사유</th></tr></thead><tbody>';
@@ -1528,8 +1565,9 @@ buildHero();buildQCTable();buildPrecTable();buildEvalTable();renderAll();
   }
   window.initSel=function(){
     if(SEL.loaded)return;SEL.loaded=true;
-    el('selLoad').onclick=renderGrid;
-    el('selMode').onchange=renderGrid;
+    el('selLoad').onclick=function(){buildCrit();renderGrid();};
+    el('selMode').onchange=function(){buildCrit();renderGrid();};
+    el('selCrit2').onchange=critWarn;
     el('selSave').onclick=function(){
       if(markCount()){return;}
       var label=(el('selLabel').value||'').trim(),mode=el('selMode').value;
@@ -1537,7 +1575,8 @@ buildHero();buildQCTable();buildPrecTable();buildEvalTable();renderAll();
       el('selSave').disabled=true;el('selStat').innerHTML='저장 중…';
       fetch('/selections/save',{method:'POST',credentials:'same-origin',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({label:label,mode:mode,samples:collect(),note:''})})
+        body:JSON.stringify({label:label,mode:mode,samples:collect(),note:'',
+                             criterion:el('selCrit2').value})})
         .then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.message||'저장 실패');return j;});})
         .then(function(j){el('selStat').innerHTML='<span class="ok">✓ '+esc(j.message||'저장됨')+'</span>';
           el('selSave').disabled=false;return load();})

@@ -139,7 +139,8 @@ def selections_save():
     label = (d.get('label') or '').strip()
     mode = (d.get('mode') or '').strip().lower()
     ok, msg = rounds.save_selection(label, mode, d.get('samples') or {},
-                                    user=session.get('user', ''), note=d.get('note') or '')
+                                    user=session.get('user', ''), note=d.get('note') or '',
+                                    criterion=d.get('criterion') or '')
     body = json.dumps({'ok': bool(ok), 'message': msg,
                        'label': rounds.canon_label(label), 'mode': mode}, ensure_ascii=False)
     return app.response_class(body, mimetype='application/json', status=200 if ok else 400)

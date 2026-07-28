@@ -334,6 +334,56 @@ SEL_REPS = ('R1', 'R2', 'R3', 'R4')
 SEL_KEEP_N = 2                      # CRMLN 제출은 채택 2반복(§4)
 SEL_DAYS = ('1', '2')
 
+# ── 이상치 판정 기준(선택 옵션) ──────────────────────────────────────
+# ★ 화면 ①탭(`#selCrit`, UC)·④탭(`#dcmSelCrit`, DCM) 드롭다운과 **같은 목록**이어야 한다.
+#   여기가 정본이고 ⑦탭은 이 목록으로 드롭다운을 만든다.
+#   ①·④탭은 인라인 <option>으로 갖고 있으므로, 값이 어긋나면 스모크가 잡는다.
+# (value, 표시 문구, 그룹, 민감도 여부)
+#   민감도(방향성) 옵션은 **결과를 유리하게 만들 수 있는 what-if 분석용**이다.
+#   기본값이 아니며, 기록에 남으면 화면에 경고를 띄운다(§0).
+SEL_CRITERIA = {
+    'uc': [
+        ('combo',    '종합 (BF+HDL 상대편차) · 균형 [기본]', '정밀도 기준 (권장)', False),
+        ('LDL',      'LDL 결과 우선 (LDL 편차 최소)',        '정밀도 기준 (권장)', False),
+        ('BF',       'BF(하부분획) 우선',                    '정밀도 기준 (권장)', False),
+        ('HDL',      'HDL 우선',                             '정밀도 기준 (권장)', False),
+        ('combo3',   '3항목 종합 (BF+HDL+LDL)',              '정밀도 기준 (권장)', False),
+        ('minpair',  '최소분산 쌍 (가장 근접 2개 채택)',      '정밀도 기준 (권장)', False),
+        ('hdl_high', 'HDL 높은값 우선 (상위 2개 채택)', '방향성 (민감도 분석 · what-if)', True),
+        ('hdl_low',  'HDL 낮은값 우선 (하위 2개 채택)', '방향성 (민감도 분석 · what-if)', True),
+        ('bf_high',  'BF 높은값 우선 (상위 2개 채택)',  '방향성 (민감도 분석 · what-if)', True),
+        ('bf_low',   'BF 낮은값 우선 (하위 2개 채택)',  '방향성 (민감도 분석 · what-if)', True),
+    ],
+    'dcm': [
+        ('median',   '정밀도(median 이상치 제외) [기본]', '정밀도 기준 (권장)', False),
+        ('minpair',  '최소분산쌍 (민감도)',               '방향성 (민감도 분석)', True),
+        ('hdl_high', 'HDL 높은값 우선 (민감도)',          '방향성 (민감도 분석)', True),
+        ('hdl_low',  'HDL 낮은값 우선 (민감도)',          '방향성 (민감도 분석)', True),
+    ],
+}
+SEL_DEFAULT_CRIT = {'uc': 'combo', 'dcm': 'median'}
+
+
+def criteria_for(mode):
+    """모드별 선택 기준 목록 → [{value, label, group, sensitivity}]."""
+    return [{'value': v, 'label': t, 'group': g, 'sensitivity': s}
+            for v, t, g, s in SEL_CRITERIA.get(str(mode or '').lower(), [])]
+
+
+def criterion_label(mode, value):
+    for v, t, _g, _s in SEL_CRITERIA.get(str(mode or '').lower(), []):
+        if v == value:
+            return t
+    return value or ''
+
+
+def is_sensitivity(mode, value):
+    """민감도(방향성) 옵션인지 — 기록에 남으면 화면에 경고를 띄운다(§0)."""
+    for v, _t, _g, s in SEL_CRITERIA.get(str(mode or '').lower(), []):
+        if v == value:
+            return bool(s)
+    return False
+
 
 def validate_selection(sel):
     """수기 선택 입력 검증. 반환 (ok, 정규화된 dict 또는 오류 메시지).
@@ -373,18 +423,26 @@ def validate_selection(sel):
     return True, out
 
 
-def save_selection(label, mode, sel, user='', note=''):
-    """회차·모드별 수기 선택을 저장(덮어쓰기). 반환 (ok, 메시지)."""
+def save_selection(label, mode, sel, user='', note='', criterion=''):
+    """회차·모드별 수기 선택을 저장(덮어쓰기). 반환 (ok, 메시지).
+
+    criterion = 이상치 판정 기준(①·④탭 드롭다운과 같은 값). 비우면 모드 기본값."""
     label = canon_label(label)
     if not label:
         return False, '회차 라벨(예: 2026.7)을 입력하세요.'
     mode = str(mode or '').lower()
     if mode not in ('uc', 'dcm'):
         return False, '모드는 uc 또는 dcm이어야 합니다.'
+    crit = str(criterion or '').strip() or SEL_DEFAULT_CRIT[mode]
+    if crit not in [c['value'] for c in criteria_for(mode)]:
+        return False, ('선택 기준 값이 올바르지 않습니다: %s (%s 목록에 없음)'
+                       % (crit, mode.upper()))
     ok, res = validate_selection(sel)
     if not ok:
         return False, res
     rec = {'samples': res, 'note': str(note or '').strip(), 'by': user,
+           'criterion': crit, 'criterion_label': criterion_label(mode, crit),
+           'sensitivity': is_sensitivity(mode, crit),
            'saved_at': datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
     cur = load_selections().get(label) or {}
     cur = {k: v for k, v in cur.items() if k in ('uc', 'dcm')}
@@ -432,9 +490,14 @@ def selection_payload():
         'all_labels': sorted(set(list(store) + labels), key=_key),
         'reps': list(SEL_REPS),
         'keep_n': SEL_KEEP_N,
+        'criteria': {'uc': criteria_for('uc'), 'dcm': criteria_for('dcm')},
+        'criteria_default': dict(SEL_DEFAULT_CRIT),
         'note': ('이 표는 매 회차 사람이 수기로 결정한 제출 선택을 남긴 기록입니다. '
                  '다음 회차 선택 시 참고용이며, 서버의 채택 로직은 이 값을 읽지 않습니다. '
                  '최종 제출·판정은 CDC 참조법 회신 및 검토자 확인 후 확정합니다.'),
+        'note_sensitivity': ('방향성(민감도) 기준은 what-if 분석용입니다. '
+                             '결과를 유리하게 만들기 위한 선택은 지양하며(§0), '
+                             '기록에 남은 경우 화면에 경고가 표시됩니다.'),
     }
 
 

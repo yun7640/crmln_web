@@ -150,6 +150,9 @@ td .st,.st{display:inline-flex;align-items:center;gap:4px;font-weight:700;font-s
   #t6 .cum-subtab.on{background:var(--s1);color:#fff;border-color:var(--s1)}
   #t6 .cum-warn{border-left:3px solid #c0392b;padding-left:9px}
   #t6 .cum-badge{font-size:11px;font-weight:600;padding:2px 7px;border-radius:9px;background:var(--surface);border:1px solid var(--border);vertical-align:middle}
+  /* ★ 누적 컷오프 안내 — ②·④탭에서도 쓰이므로 #t6 스코프 밖에 둔다(스코프 안에 두면 색이 안 먹는다). */
+  .cum-badge{font-size:11px;font-weight:600;padding:2px 7px;border-radius:9px;background:var(--surface);border:1px solid var(--border);vertical-align:middle}
+  .cum-cut{border-left:3px solid var(--s3,#c0392b);padding-left:9px;margin:6px 0 10px}
   #t6 .cum-bar{display:inline-block;width:64px;height:8px;border-radius:4px;background:var(--border);vertical-align:middle;overflow:hidden}
   #t6 .cum-bar i{display:block;height:100%;background:#1b7f4b}
   #t6 .cum-bar.warn i{background:#e08a1e}
@@ -200,6 +203,7 @@ td .st,.st{display:inline-flex;align-items:center;gap:4px;font-weight:700;font-s
   <div id="bfPreview"></div>
 
   <p class="panel-title" style="margin-top:14px">QC · Control bias 경향</p>
+  <div id="cumCutNote"></div>
   <p class="cum-legend">점선=CRMLN member 허용 한계. 회차별 관리물질 평균 bias(내부 QC 정확도·측정지 기반).
     실선=<b>시드(과거 이력)</b>, 성긴 점선 △=<b>업로드·소급 계산값</b>. 두 값이 다르면 아래 대조표에 병기하며 어느 쪽도 자동 채택하지 않습니다.</p>
   <div class="cum-grid2">
@@ -332,6 +336,7 @@ td .st,.st{display:inline-flex;align-items:center;gap:4px;font-weight:700;font-s
 <div class="card">
   <h2>공식 CDC 평가 bias 추이 (2023.1–2026.1)</h2>
   <p class="desc">CS 검체(CS01–04/03) 평균의 CDC 기준값 대비 bias. 초록 음영=허용범위, 빨강 점선=허용한계(TC ±1%·HDL ±1 mg/dL·LDL ±2%). 빨강 점=미인증 survey.</p>
+  <div id="evalCutNote"></div>
   <div class="grid3" id="evalTrends"></div>
   <button class="tabtoggle" data-tgt="evalTable" style="margin-top:14px">표로 보기 (bias·CV·판정) ▾</button>
   <div id="evalTable" class="hidden tblwrap"></div>
@@ -339,6 +344,7 @@ td .st,.st{display:inline-flex;align-items:center;gap:4px;font-weight:700;font-s
 <div class="card">
   <h2>공식 평가 정밀도 추이</h2>
   <p class="desc">CDC 평가 imprecision(CV%/SD). 빨강 점선=허용한계(TC 1%·LDL 1.5%·HDL 1 mg/dL SD).</p>
+  <div id="evalCVCutNote"></div>
   <div class="grid3" id="evalCV"></div>
 </div>
 </div>
@@ -409,6 +415,7 @@ td .st,.st{display:inline-flex;align-items:center;gap:4px;font-weight:700;font-s
     <p class="panel-sub">내부 <b>HDL Control QC bias</b>(실선)와 <b>CDC 평가 bias</b>(점선)를 <b>공통 y축(mg/dL)</b>에 겹쳐
       회차별 대응을 봅니다. 두 선의 간격 = QC−평가 offset. 초록 음영·빨강 점선 = CRMLN member 판정 기준(±1.0 mg/dL).
       DCM은 HDL-C 단일 항목이므로 UC 탭 ③의 4항목 패널과 달리 한 패널로 표시합니다.</p>
+    <div id="dcmRelCutNote"></div>
     <div id="dcmRelChart"></div>
     <p class="note" id="dcmRelNote"></p>
     <div id="dcmRelTable" class="tblwrap"></div>
@@ -583,15 +590,34 @@ function qcbtDx(tk){const D=qcbtData(tk);const U=D.unit,lim=D.lim,limTxt='±'+fm
 function buildQcBiasTrend(){const w=document.getElementById('qcBiasTrend');if(!w)return;w.innerHTML='';const tks=['NIST','BF','HDL','LDL'].filter(tk=>DATA.qc_bias_trend[tk]);tks.forEach(tk=>{if(curFilter!=='all'&&curFilter!==tk&&!(tk==='BF'&&curFilter==='TC')&&!(tk==='NIST'&&curFilter==='TC'))return;const d=document.createElement('div');d.innerHTML=`<p class="panel-title"><span class="adot" style="background:${QCBT_COL[tk]}"></span>${DATA.qc_bias_trend[tk].label}</p>`;d.appendChild(qcbtChart(tk));w.appendChild(d);});if(!w.children.length)w.innerHTML='<p class="note">선택 항목 없음.</p>';const dx=document.getElementById('qcBiasDx');if(dx){const shown=['NIST','BF','HDL','LDL'].filter(tk=>DATA.qc_bias_trend[tk]&&(curFilter==='all'||curFilter===tk||((tk==='BF'||tk==='NIST')&&curFilter==='TC')));dx.className='grid2';dx.innerHTML=shown.map(qcbtDx).join('');}}
 function buildHero(){const s=DATA.summary;document.getElementById('qcval').innerHTML=(s.qc_total-s.qc_warn)+'<small>/'+s.qc_total+'</small>';document.getElementById('precval').innerHTML=(s.prec_total-s.prec_warn)+'<small>/'+s.prec_total+'</small>';document.getElementById('dayval').innerHTML=fmt(s.max_day_diff_pct)+'<small>%</small>';document.getElementById('daysub').textContent='HDL CS01 (0.65 mg/dL)';document.getElementById('vialval').innerHTML=fmt(s.max_vial_diff)+'<small> mg/dL</small>';document.getElementById('t-qc').classList.toggle('flag',s.qc_warn>0);document.getElementById('verdictNote').innerHTML=`정밀도·재현성 전 항목 적합, 과거 추이와 정합. 보조 QC(Q2) 2건 — <b>BF +1.27%</b>, <b>LDL +2.14%</b> — member 한계 소폭 초과(주 관리물질 CFS 적합). CS 최종 bias는 CDC 회신 후 확정.`;}
 
+/* ── 누적 추이 컷오프 (사용자 확정 2026-07-28) ─────────────────────────────
+   누적 추이 분석은 2025.7 회차부터 표시한다. 2025년 6월 이전 회차는 **측정값 엑셀 구조가
+   달라**(순도보정 블록 분리·NS01/NS02 검체·Day1/Day2 별도 파일·반복 3개 등) 같은 추세선에
+   올리면 방법이 다른 값을 잇는 셈이 되므로 그래프에서 분리한다(§0).
+   ★ 자료를 삭제하지 않는다 — 표·매트릭스에는 그대로 남기고 '참고(구 형식)'으로 표시만 한다.
+   ★ 서버 rounds.CUM_START 와 **같은 값을 유지**할 것(어긋나면 화면과 통계가 달라진다). */
+const CUM_START='2025.7';
+function survKey(s){const m=String(s).match(/^(\d{4})\D+(\d{1,2})/);return m?(+m[1])*10+((+m[2])>=7?7:1):99999;}
+function inCum(s){return survKey(s)>=survKey(CUM_START);}
+function cumSplit(arr){const a=[],b=[];(arr||[]).forEach(s=>(inCum(s)?a:b).push(s));return [a,b];}
+function survLbl(s){return (DATA.survey_labels&&DATA.survey_labels[s])||s;}
+function setCutNote(id,what){const el=document.getElementById(id);if(el)el.innerHTML=legacyNote(cumSplit(DATA.ps_surveys)[1],what);}
+function legacyNote(list,what){
+  if(!list||!list.length)return '';
+  return '<p class="note cum-cut">'+what+'은 <b>'+CUM_START+' 회차부터</b> 표시합니다. '
+    +'측정값 엑셀 구조가 달라 같은 추세선에 올리지 않는 이전 회차: '
+    +list.map(s=>'<span class="cum-badge">'+survLbl(s)+'</span>').join(' ')
+    +' — 삭제하지 않고 <b>참고용으로 분리 보관</b>하며, 아래 표에서는 그대로 확인할 수 있습니다.</p>';}
+
 /* ---------- TAB2: cert matrix ---------- */
 function buildCert(){const surv=DATA.ps_surveys,allS=surv.concat(['2026.7']);const wrap=document.getElementById('certMatrix');wrap.style.gridTemplateColumns=`90px repeat(${allS.length},1fr)`;wrap.className='matrix';let html='<div class="mcell h"></div>'+allS.map(s=>`<div class="mcell h">${DATA.survey_labels[s]}</div>`).join('');const rowAns=curFilter==='all'?AN:[curFilter];rowAns.forEach(an=>{html+=`<div class="mcell h" style="text-align:left;display:flex;align-items:center;gap:6px"><span class="adot" style="width:9px;height:9px;border-radius:50%;background:${AN_COLOR[an]};display:inline-block"></span>${AN_LABEL[an]}</div>`;allS.forEach(s=>{if(s==='2026.7'){html+=`<div class="mcell pending">평가<br>대기<span class="mv">QC만</span></div>`;return;}const e=DATA.ps_eval[s][an],pass=e.cert,unit=an==='HDL'?'mg/dL':'%';const tcakNote=(an==='LDL'&&e.pass_tcak==='NO')?' (TC-AK 미통과)':'';html+=`<div class="mcell ${pass?'pass':'fail'}" title="${AN_LABEL[an]} ${DATA.survey_labels[s]}">${pass?'✓':'✗'}<span class="mv">${(e.bias>=0?'+':'')+fmt(e.bias,2)}${unit==='%'?'%':''}</span></div>`;});});wrap.innerHTML=html;
   // summary counts
   let msg=[];AN.forEach(an=>{const f=surv.filter(s=>!DATA.ps_eval[s][an].cert);const lab=AN_LABEL[an];if(f.length===0)msg.push(`${lab} 7/7 인증`);else msg.push(`${lab} ${7-f.length}/7 인증 (미인증: ${f.map(x=>DATA.survey_labels[x]).join(', ')})`);});document.getElementById('certSummary').innerHTML='<b>요약:</b> '+msg.join(' · ')+'. LDL-C 2023.7 미인증은 자체 bias(−1.53%)가 아니라 <b>TC-AK 전제 미통과</b>에 기인. LDL-C 2023.1은 자체 bias −2.89%로 미인증.';}
 /* eval bias trend small multiples */
-function evalTrendChart(an){const surv=DATA.ps_surveys;const isHDL=an==='HDL';const band=isHDL?1.0:(an==='TC'?1.0:2.0);const unit=isHDL?'mg/dL':'%';const pts=surv.map(s=>{const e=DATA.ps_eval[s][an];return{s,v:e.bias,cv:e.cv,cert:e.cert,pass_tcak:e.pass_tcak};});const W=340,H=210,padL=40,padR=20,padT=12,padB=30,x0=padL,x1=W-padR,y0=H-padB,y1=padT;let mn=Math.min(-band,...pts.map(p=>p.v)),mx=Math.max(band,...pts.map(p=>p.v));const pad=(mx-mn)*0.18;mn-=pad;mx+=pad;const sx=i=>x0+i/(surv.length-1)*(x1-x0),yy=v=>y1+(mx-v)/(mx-mn)*(y0-y1);const svg=el('svg',{class:'chart',viewBox:`0 0 ${W} ${H}`});svg.appendChild(el('rect',{x:x0,y:yy(band),width:x1-x0,height:yy(-band)-yy(band),fill:'color-mix(in srgb,var(--good) 9%,transparent)'}));[-band,band].forEach(L=>svg.appendChild(el('line',{x1:x0,y1:yy(L),x2:x1,y2:yy(L),class:'limline'})));svg.appendChild(el('line',{x1:x0,y1:yy(0),x2:x1,y2:yy(0),class:'zeroline'}));niceTicks(mn,mx,3).forEach(t=>{const tx=el('text',{x:x0-6,y:yy(t)+3,'text-anchor':'end',class:'tick'});tx.textContent=(t>0?'+':'')+t.toFixed(1);svg.appendChild(tx);});surv.forEach((s,i)=>{const tx=el('text',{x:sx(i),y:H-9,'text-anchor':'middle',class:'tick'});tx.textContent=DATA.survey_labels[s];svg.appendChild(tx);});const col=AN_COLOR[an];let path='';pts.forEach((p,i)=>{path+=(i?'L':'M')+sx(i)+' '+yy(p.v)+' ';});svg.appendChild(el('path',{d:path,fill:'none',stroke:col,'stroke-width':2,'stroke-linejoin':'round'}));pts.forEach((p,i)=>{const fail=!p.cert;const c=el('circle',{cx:sx(i),cy:yy(p.v),r:fail?5.5:4,fill:fail?'var(--crit)':col,stroke:'var(--surface)','stroke-width':2,style:'cursor:pointer'});c.addEventListener('mousemove',ev=>showTT(`<b>${AN_LABEL[an]} · ${DATA.survey_labels[p.s].replace("'","20")}</b><div class="row"><span class="k">평가 bias</span><span class="v">${(p.v>=0?'+':'')+fmt(p.v)} ${unit}</span></div><div class="row"><span class="k">평가 ${isHDL?'SD':'CV'}</span><span class="v">${fmt(p.cv)} ${isHDL?'mg/dL':'%'}</span></div><div class="row"><span class="k">한계</span><span class="v">±${band} ${unit}</span></div>${an==='LDL'?`<div class="row"><span class="k">Pass TC-AK</span><span class="v">${p.pass_tcak}</span></div>`:''}<div class="row"><span class="k">판정</span><span class="v">${p.cert?'✓ 인증':'✗ 미인증'}</span></div>`,ev));c.addEventListener('mouseleave',hideTT);svg.appendChild(c);});return svg;}
-function buildEvalTrends(){const w=document.getElementById('evalTrends');w.innerHTML='';AN.forEach(an=>{if(curFilter!=='all'&&curFilter!==an)return;const d=document.createElement('div');const nf=DATA.ps_surveys.filter(s=>!DATA.ps_eval[s][an].cert).length;d.innerHTML=`<p class="panel-title"><span class="adot" style="background:${AN_COLOR[an]}"></span>${AN_LABEL[an]} <span class="panel-sub" style="margin:0">(±${an==='HDL'?'1 mg/dL':(an==='TC'?'1%':'2%')})</span>${nf?` <span class="pill crit">미인증 ${nf}</span>`:` <span class="pill good">전량 인증</span>`}</p>`;d.appendChild(evalTrendChart(an));w.appendChild(d);});if(!w.children.length)w.innerHTML='<p class="note">선택 항목 없음.</p>';}
-function evalCVChart(an){const surv=DATA.ps_surveys;const isHDL=an==='HDL';const lim=isHDL?1.0:(an==='TC'?1.0:1.5);const unit=isHDL?'mg/dL':'%';const pts=surv.map(s=>({s,v:DATA.ps_eval[s][an].cv}));const W=340,H=190,padL=40,padR=20,padT=12,padB=30,x0=padL,x1=W-padR,y0=H-padB,y1=padT;let mx=Math.max(lim*1.2,...pts.map(p=>p.v)*1.1||[lim]);mx=Math.max(lim*1.2,...pts.map(p=>p.v));mx*=1.15;const sx=i=>x0+i/(surv.length-1)*(x1-x0),yy=v=>y1+(mx-v)/mx*(y0-y1);const svg=el('svg',{class:'chart',viewBox:`0 0 ${W} ${H}`});svg.appendChild(el('line',{x1:x0,y1:yy(lim),x2:x1,y2:yy(lim),class:'limline'}));[0,lim/2,lim,mx].forEach(t=>{if(t>mx)return;const tx=el('text',{x:x0-6,y:yy(t)+3,'text-anchor':'end',class:'tick'});tx.textContent=t.toFixed(1);svg.appendChild(tx);});surv.forEach((s,i)=>{const tx=el('text',{x:sx(i),y:H-9,'text-anchor':'middle',class:'tick'});tx.textContent=DATA.survey_labels[s];svg.appendChild(tx);const col=AN_COLOR[an],p=pts[i],bw=14,over=p.v>lim;svg.appendChild(el('rect',{x:sx(i)-bw/2,y:yy(p.v),width:bw,height:y0-yy(p.v),rx:4,fill:over?'var(--warn)':col}));const hit=el('rect',{x:sx(i)-bw,y:padT,width:bw*2,height:y0-padT,fill:'transparent',style:'cursor:pointer'});hit.addEventListener('mousemove',ev=>showTT(`<b>${AN_LABEL[an]} · ${DATA.survey_labels[p.s].replace("'","20")}</b><div class="row"><span class="k">평가 ${isHDL?'SD':'CV'}</span><span class="v">${fmt(p.v)} ${unit}</span></div><div class="row"><span class="k">한계</span><span class="v">≤${lim} ${unit}</span></div>`,ev));hit.addEventListener('mouseleave',hideTT);svg.appendChild(hit);});return svg;}
-function buildEvalCV(){const w=document.getElementById('evalCV');w.innerHTML='';AN.forEach(an=>{if(curFilter!=='all'&&curFilter!==an)return;const d=document.createElement('div');d.innerHTML=`<p class="panel-title"><span class="adot" style="background:${AN_COLOR[an]}"></span>${AN_LABEL[an]} ${isHDLlbl(an)}</p>`;d.appendChild(evalCVChart(an));w.appendChild(d);});if(!w.children.length)w.innerHTML='<p class="note">선택 항목 없음.</p>';}
+function evalTrendChart(an){const surv=cumSplit(DATA.ps_surveys)[0];const isHDL=an==='HDL';const band=isHDL?1.0:(an==='TC'?1.0:2.0);const unit=isHDL?'mg/dL':'%';const pts=surv.map(s=>{const e=DATA.ps_eval[s][an];return{s,v:e.bias,cv:e.cv,cert:e.cert,pass_tcak:e.pass_tcak};});const W=340,H=210,padL=40,padR=20,padT=12,padB=30,x0=padL,x1=W-padR,y0=H-padB,y1=padT;let mn=Math.min(-band,...pts.map(p=>p.v)),mx=Math.max(band,...pts.map(p=>p.v));const pad=(mx-mn)*0.18;mn-=pad;mx+=pad;const sx=i=>x0+i/(surv.length-1)*(x1-x0),yy=v=>y1+(mx-v)/(mx-mn)*(y0-y1);const svg=el('svg',{class:'chart',viewBox:`0 0 ${W} ${H}`});svg.appendChild(el('rect',{x:x0,y:yy(band),width:x1-x0,height:yy(-band)-yy(band),fill:'color-mix(in srgb,var(--good) 9%,transparent)'}));[-band,band].forEach(L=>svg.appendChild(el('line',{x1:x0,y1:yy(L),x2:x1,y2:yy(L),class:'limline'})));svg.appendChild(el('line',{x1:x0,y1:yy(0),x2:x1,y2:yy(0),class:'zeroline'}));niceTicks(mn,mx,3).forEach(t=>{const tx=el('text',{x:x0-6,y:yy(t)+3,'text-anchor':'end',class:'tick'});tx.textContent=(t>0?'+':'')+t.toFixed(1);svg.appendChild(tx);});surv.forEach((s,i)=>{const tx=el('text',{x:sx(i),y:H-9,'text-anchor':'middle',class:'tick'});tx.textContent=DATA.survey_labels[s];svg.appendChild(tx);});const col=AN_COLOR[an];let path='';pts.forEach((p,i)=>{path+=(i?'L':'M')+sx(i)+' '+yy(p.v)+' ';});svg.appendChild(el('path',{d:path,fill:'none',stroke:col,'stroke-width':2,'stroke-linejoin':'round'}));pts.forEach((p,i)=>{const fail=!p.cert;const c=el('circle',{cx:sx(i),cy:yy(p.v),r:fail?5.5:4,fill:fail?'var(--crit)':col,stroke:'var(--surface)','stroke-width':2,style:'cursor:pointer'});c.addEventListener('mousemove',ev=>showTT(`<b>${AN_LABEL[an]} · ${DATA.survey_labels[p.s].replace("'","20")}</b><div class="row"><span class="k">평가 bias</span><span class="v">${(p.v>=0?'+':'')+fmt(p.v)} ${unit}</span></div><div class="row"><span class="k">평가 ${isHDL?'SD':'CV'}</span><span class="v">${fmt(p.cv)} ${isHDL?'mg/dL':'%'}</span></div><div class="row"><span class="k">한계</span><span class="v">±${band} ${unit}</span></div>${an==='LDL'?`<div class="row"><span class="k">Pass TC-AK</span><span class="v">${p.pass_tcak}</span></div>`:''}<div class="row"><span class="k">판정</span><span class="v">${p.cert?'✓ 인증':'✗ 미인증'}</span></div>`,ev));c.addEventListener('mouseleave',hideTT);svg.appendChild(c);});return svg;}
+function buildEvalTrends(){setCutNote('evalCutNote','평가 bias 경향');const w=document.getElementById('evalTrends');w.innerHTML='';AN.forEach(an=>{if(curFilter!=='all'&&curFilter!==an)return;const d=document.createElement('div');const nf=DATA.ps_surveys.filter(s=>!DATA.ps_eval[s][an].cert).length;d.innerHTML=`<p class="panel-title"><span class="adot" style="background:${AN_COLOR[an]}"></span>${AN_LABEL[an]} <span class="panel-sub" style="margin:0">(±${an==='HDL'?'1 mg/dL':(an==='TC'?'1%':'2%')})</span>${nf?` <span class="pill crit">미인증 ${nf}</span>`:` <span class="pill good">전량 인증</span>`}</p>`;d.appendChild(evalTrendChart(an));w.appendChild(d);});if(!w.children.length)w.innerHTML='<p class="note">선택 항목 없음.</p>';}
+function evalCVChart(an){const surv=cumSplit(DATA.ps_surveys)[0];const isHDL=an==='HDL';const lim=isHDL?1.0:(an==='TC'?1.0:1.5);const unit=isHDL?'mg/dL':'%';const pts=surv.map(s=>({s,v:DATA.ps_eval[s][an].cv}));const W=340,H=190,padL=40,padR=20,padT=12,padB=30,x0=padL,x1=W-padR,y0=H-padB,y1=padT;let mx=Math.max(lim*1.2,...pts.map(p=>p.v)*1.1||[lim]);mx=Math.max(lim*1.2,...pts.map(p=>p.v));mx*=1.15;const sx=i=>x0+i/(surv.length-1)*(x1-x0),yy=v=>y1+(mx-v)/mx*(y0-y1);const svg=el('svg',{class:'chart',viewBox:`0 0 ${W} ${H}`});svg.appendChild(el('line',{x1:x0,y1:yy(lim),x2:x1,y2:yy(lim),class:'limline'}));[0,lim/2,lim,mx].forEach(t=>{if(t>mx)return;const tx=el('text',{x:x0-6,y:yy(t)+3,'text-anchor':'end',class:'tick'});tx.textContent=t.toFixed(1);svg.appendChild(tx);});surv.forEach((s,i)=>{const tx=el('text',{x:sx(i),y:H-9,'text-anchor':'middle',class:'tick'});tx.textContent=DATA.survey_labels[s];svg.appendChild(tx);const col=AN_COLOR[an],p=pts[i],bw=14,over=p.v>lim;svg.appendChild(el('rect',{x:sx(i)-bw/2,y:yy(p.v),width:bw,height:y0-yy(p.v),rx:4,fill:over?'var(--warn)':col}));const hit=el('rect',{x:sx(i)-bw,y:padT,width:bw*2,height:y0-padT,fill:'transparent',style:'cursor:pointer'});hit.addEventListener('mousemove',ev=>showTT(`<b>${AN_LABEL[an]} · ${DATA.survey_labels[p.s].replace("'","20")}</b><div class="row"><span class="k">평가 ${isHDL?'SD':'CV'}</span><span class="v">${fmt(p.v)} ${unit}</span></div><div class="row"><span class="k">한계</span><span class="v">≤${lim} ${unit}</span></div>`,ev));hit.addEventListener('mouseleave',hideTT);svg.appendChild(hit);});return svg;}
+function buildEvalCV(){setCutNote('evalCVCutNote','평가 CV 경향');const w=document.getElementById('evalCV');w.innerHTML='';AN.forEach(an=>{if(curFilter!=='all'&&curFilter!==an)return;const d=document.createElement('div');d.innerHTML=`<p class="panel-title"><span class="adot" style="background:${AN_COLOR[an]}"></span>${AN_LABEL[an]} ${isHDLlbl(an)}</p>`;d.appendChild(evalCVChart(an));w.appendChild(d);});if(!w.children.length)w.innerHTML='<p class="note">선택 항목 없음.</p>';}
 function isHDLlbl(an){return `<span class="panel-sub" style="margin:0">(≤${an==='HDL'?'1 SD':(an==='TC'?'1%':'1.5%')})</span>`;}
 function buildEvalTable(){const surv=DATA.ps_surveys;let h='<table><thead><tr><th>survey</th><th>TC bias%</th><th>TC CV%</th><th>TC</th><th>HDL bias(mg/dL)</th><th>HDL SD</th><th>HDL</th><th>LDL bias%</th><th>LDL CV%</th><th>Pass TC-AK</th><th>LDL</th></tr></thead><tbody>';surv.forEach(s=>{const e=DATA.ps_eval[s];const c=x=>`<span class="st ${x?'ok':'fail'}">${x?'✓':'✗'}</span>`;h+=`<tr><td>${DATA.survey_labels[s].replace("'","20")}</td><td>${(e.TC.bias>=0?'+':'')+fmt(e.TC.bias)}</td><td>${fmt(e.TC.cv)}</td><td>${c(e.TC.cert)}</td><td>${(e.HDL.bias>=0?'+':'')+fmt(e.HDL.bias)}</td><td>${fmt(e.HDL.cv)}</td><td>${c(e.HDL.cert)}</td><td>${(e.LDL.bias>=0?'+':'')+fmt(e.LDL.bias)}</td><td>${fmt(e.LDL.cv)}</td><td>${e.LDL.pass_tcak}</td><td>${c(e.LDL.cert)}</td></tr>`;});document.getElementById('evalTable').innerHTML=h+'</tbody></table>';}
 
@@ -691,7 +717,9 @@ function dcmQcHistTable(){
 }
 function dcmRelChart(){
   var host=document.getElementById('dcmRelChart');if(!host)return;
-  var surv=DATA.survey_order,qc=dcmQcSeries(),ev={};
+  var _sp=cumSplit(DATA.survey_order),surv=_sp[0],qc=dcmQcSeries(),ev={};
+  var _rn=document.getElementById('dcmRelCutNote');
+  if(_rn)_rn.innerHTML=legacyNote(_sp[1],'DCM QC↔평가 대응 그래프');
   Object.keys(DATA.dcm_eval||{}).forEach(function(s){if(DATA.dcm_eval[s].bias!=null)ev[s]=DATA.dcm_eval[s].bias;});
   var band=1.0,vals=[band,-band];
   surv.forEach(function(s){if(qc[s]!=null)vals.push(qc[s]);if(ev[s]!=null)vals.push(ev[s]);});
@@ -1007,7 +1035,14 @@ buildHero();buildQCTable();buildPrecTable();buildEvalTable();renderAll();
     destroyCharts();
     var bm=document.getElementById('bfMinYear');
     if(bm&&DATA.backfill&&DATA.backfill.min_year)bm.textContent=DATA.backfill.min_year;
-    var surv=DATA.surveys||[];
+    // ★ 누적 추이 컷오프 — 서버가 내려준 surveys_cum(=2025.7~)을 우선 사용하고,
+    //   구 서버 응답이면 화면에서 같은 규칙으로 자른다. 값은 지우지 않고 표시만 분리한다(§0).
+    var survAll=DATA.surveys||[];
+    var surv=(DATA.surveys_cum&&DATA.surveys_cum.length)?DATA.surveys_cum:cumSplit(survAll)[0];
+    var survLegacy=DATA.surveys_legacy||cumSplit(survAll)[1];
+    var cn=document.getElementById('cumCutNote');
+    if(cn)cn.innerHTML=legacyNote(survLegacy,'누적 경향 그래프')
+      +(DATA.cum_note?'<p class="cum-legend">'+esc(DATA.cum_note)+'</p>':'');
     // 시드(실선)와 업로드·소급 계산값(성긴 점선 △)을 **병기**한다. 어느 쪽도 덮어쓰지 않는다(§0).
     function upDS(name,color,pts){return lineDS(name+' (업로드·소급)',color,surv,pts,
       {borderDash:[6,4],pointStyle:'triangle',pointRadius:5,borderWidth:1.5});}

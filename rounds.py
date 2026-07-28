@@ -47,6 +47,39 @@ def label_year(label):
     return int(m.group(1)) if m else None
 
 
+# ── 누적 추이 분석 컷오프 ─────────────────────────────────────────────
+# ★ 사용자 확정(2026-07-28): 누적 추이 분석은 **2025.7 회차부터** 시작한다.
+#   2025년 6월 이전(2023.1–2025.1) 회차는 **측정값 엑셀 구조가 달라**(순도보정 블록 별도,
+#   NS01·NS02 검체 존재, Day1/Day2가 별도 파일, 반복 3개 등) 같은 축에 올려 비교하면
+#   방법이 다른 값을 한 추세선으로 잇는 셈이 된다 → §0 위반.
+#   ⇒ **삭제하지 않고 분리 보관**하여 '참고(구 형식)'으로만 표시한다.
+#   적용 범위는 UC·DCM 양쪽 모두(사용자 확정).
+CUM_START = '2025.7'
+CUM_NOTE = ('누적 추이 분석은 %s 회차부터 표시합니다. 이전 회차는 측정값 엑셀 구조가 달라 '
+            '동일한 추세선에 올리지 않으며, 삭제하지 않고 참고용으로 분리해 보관합니다.')
+
+
+def in_cumulative(label, start=None):
+    """누적 추이 분석에 포함할 회차인지 판정. 컷오프 이전은 '참고(구 형식)'로 분리한다."""
+    return _key(canon_label(label)) >= _key(start or CUM_START)
+
+
+def split_by_cutoff(labels, start=None):
+    """라벨 목록을 (누적 대상, 참고=컷오프 이전)으로 나눈다. 양쪽 다 회차순 정렬."""
+    cum, legacy = [], []
+    for lab in sorted({str(l) for l in (labels or [])}, key=_key):
+        (cum if in_cumulative(lab, start) else legacy).append(lab)
+    return cum, legacy
+
+
+def split_map_by_cutoff(mapping, start=None):
+    """{라벨: 값} 딕셔너리를 (누적 대상, 참고) 두 딕셔너리로 나눈다."""
+    cum, legacy = {}, {}
+    for lab, val in (mapping or {}).items():
+        (cum if in_cumulative(lab, start) else legacy)[lab] = val
+    return cum, legacy
+
+
 def min_backfill_year(today=None):
     """시점이 불확실할 때 허용하는 가장 오래된 연도(올해 포함 최근 BACKFILL_YEARS개 연도)."""
     y = (today or datetime.date.today()).year
@@ -342,7 +375,8 @@ def dashboard_payload():
         qc_bias[an] = {'lim': meta['lim'], 'unit': meta['unit'], 'label': meta.get('label', an),
                        'points': dict(meta.get('points', {})),
                        'points_seed': dict(meta.get('points', {})),
-                       'points_upload': {}}
+                       'points_upload': {},
+                       'points_cum': {}, 'points_legacy': {}}
     conflicts = []
     for label, r in store.items():
         uc = r.get('uc')
@@ -365,6 +399,11 @@ def dashboard_payload():
                                   'diff': round(val - sv, 3),
                                   'reference': is_reference(r)})
     conflicts.sort(key=lambda c: (_key(c['label']), c['analyte']))
+    # 컷오프 분리 — 값은 그대로 두고 '누적 대상'과 '참고(구 형식)'로만 나눈다(§0: 삭제하지 않음).
+    for an in qc_bias:
+        cum, legacy = split_map_by_cutoff(qc_bias[an]['points'])
+        qc_bias[an]['points_cum'] = cum
+        qc_bias[an]['points_legacy'] = legacy
 
     # 3) DCM QC HDL Control bias 트렌드(mg/dL)
     #    시드(측정지에서 확정한 과거 회차) + 업로드 회차. 시드는 별도로도 보존해 병기한다(§0).
@@ -395,6 +434,11 @@ def dashboard_payload():
         uploaded[label] = {'label': label, 'date': r.get('date', ''),
                            'uc': r.get('uc'), 'dcm': r.get('dcm'), 'reference': ref}
 
+    surveys_cum, surveys_legacy = split_by_cutoff(surveys)
+    ps_cum, ps_legacy = split_map_by_cutoff(seed.get('ps_eval', {}))
+    dcm_ev_cum, dcm_ev_legacy = split_map_by_cutoff(seed.get('dcm_eval', {}))
+    dcm_qc_cum, dcm_qc_legacy = split_map_by_cutoff(dcm_qc)
+
     return {
         'surveys': surveys,
         'seed_surveys': seed.get('surveys', []),
@@ -410,6 +454,15 @@ def dashboard_payload():
         'reference_labels': reference_labels,
         'conflicts': conflicts,
         'backfill': {'min_year': min_backfill_year(), 'years': BACKFILL_YEARS},
+        # ── 누적 컷오프(2025.7~) ──────────────────────────────────────
+        # 값 자체는 위 계열에 그대로 남아 있고, 아래는 **표시 분리용** 이다.
+        'cum_start': CUM_START,
+        'cum_note': CUM_NOTE % CUM_START,
+        'surveys_cum': surveys_cum,
+        'surveys_legacy': surveys_legacy,
+        'ps_eval_cum': ps_cum, 'ps_eval_legacy': ps_legacy,
+        'dcm_eval_cum': dcm_ev_cum, 'dcm_eval_legacy': dcm_ev_legacy,
+        'dcm_qc_cum': dcm_qc_cum, 'dcm_qc_legacy': dcm_qc_legacy,
         'note_seed': ('시드(과거 이력)와 업로드 소급 계산 값은 서로 덮어쓰지 않고 병기합니다. '
                       '차이가 있으면 아래 대조표에 그대로 표시되며, 어느 쪽도 자동으로 채택하지 않습니다.'),
     }

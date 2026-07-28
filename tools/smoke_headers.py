@@ -169,6 +169,63 @@ def main():
           dp.get('total') == sum((dp.get('counts') or {}).values()), dp)
     check('통계 note에 방법론 경고 포함', '판정' in (S.get('note') or ''), S.get('note'))
 
+    print('[6d] 누적 추이 컷오프 (2025.7~) — 사용자 확정 2026-07-28')
+    import rounds as R0  # noqa: E402
+    check('rounds.CUM_START = 2025.7', R0.CUM_START == '2025.7', R0.CUM_START)
+    # 경계: 2025.1은 제외, 2025.7은 포함. 2024.12는 '2024 하반기'라 제외.
+    for lab, exp in (('2023.1', False), ('2024.7', False), ('2024.12', False), ('2025.1', False),
+                     ('2025.7', True), ('2025-07-01', True), ('2026.1', True), ('2026.7', True)):
+        check('in_cumulative(%s)=%s' % (lab, exp), R0.in_cumulative(lab) is exp, lab)
+    cum, leg = R0.split_by_cutoff(['2023.1', '2025.1', '2025.7', '2026.7'])
+    check('split_by_cutoff 분리', cum == ['2025.7', '2026.7'] and leg == ['2023.1', '2025.1'], (cum, leg))
+    for k in ('cum_start', 'cum_labels', 'legacy_labels', 'note_cutoff'):
+        check('stats.%s 존재' % k, k in S, sorted(S)[:14])
+    check('stats.cum_start 일치', S.get('cum_start') == R0.CUM_START, S.get('cum_start'))
+    D = c.get('/rounds/data').get_json(silent=True) or {}
+    for k in ('cum_start', 'cum_note', 'surveys_cum', 'surveys_legacy',
+              'ps_eval_cum', 'ps_eval_legacy', 'dcm_eval_cum', 'dcm_eval_legacy',
+              'dcm_qc_cum', 'dcm_qc_legacy'):
+        check('/rounds/data.%s 존재' % k, k in D, sorted(D)[:16])
+    check('surveys_cum은 컷오프 이후만',
+          all(R0.in_cumulative(s) for s in D.get('surveys_cum') or []), D.get('surveys_cum'))
+    check('surveys_legacy는 컷오프 이전만',
+          all(not R0.in_cumulative(s) for s in D.get('surveys_legacy') or []), D.get('surveys_legacy'))
+    check('컷오프로 자료를 삭제하지 않음(surveys 원본 유지)',
+          set(D.get('surveys_cum') or []) | set(D.get('surveys_legacy') or []) == set(D.get('surveys') or []),
+          (D.get('surveys'), D.get('surveys_cum'), D.get('surveys_legacy')))
+    check('시드 과거 회차가 legacy로 분리됨(2023.1)',
+          '2023.1' in (D.get('surveys_legacy') or []), D.get('surveys_legacy'))
+    qb = (D.get('qc_bias') or {}).get('HDL') or {}
+    check('qc_bias에 points_cum·points_legacy 분리',
+          'points_cum' in qb and 'points_legacy' in qb, sorted(qb))
+    check('qc_bias 원본 points는 그대로 보존',
+          set(qb.get('points_cum') or {}) | set(qb.get('points_legacy') or {}) == set(qb.get('points') or {}),
+          (sorted(qb.get('points') or {}), sorted(qb.get('points_cum') or {})))
+    # drift는 컷오프 이전 회차를 추세에서 빼야 한다(값은 bias_summary에 legacy 표시로 남는다)
+    fake = {'2024.7': {'dcm': {'qc': [{'analyte': 'HDL', 'name': 'HDL C', 'day': 1,
+                                       'biasmgdl': -0.5, 'biaspct': -1.0}], 'samples': []}},
+            '2025.7': {'dcm': {'qc': [{'analyte': 'HDL', 'name': 'HDL C', 'day': 1,
+                                       'biasmgdl': 0.1, 'biaspct': 0.2}], 'samples': []}}}
+    import stats as ST  # noqa: E402
+    dr2 = ST.drift(fake)
+    check('drift가 컷오프 이전 회차를 제외',
+          (dr2.get('dcm', {}).get('HDL', {}).get('labels') or []) == ['2025.7'], dr2)
+    check('drift에 제외 목록 기록', '2024.7/DCM' in (dr2.get('_excluded_legacy') or []), dr2.get('_excluded_legacy'))
+    bs2 = ST.bias_summary(fake)
+    check('bias_summary는 값을 지우지 않고 legacy 표시만',
+          bs2['2024.7']['dcm']['HDL']['legacy'] is True
+          and bs2['2025.7']['dcm']['HDL']['legacy'] is False
+          and bs2['2024.7']['dcm']['HDL']['mean'] == -0.5, bs2)
+    # 화면(JS)과 서버(Python)의 컷오프 판정이 어긋나면 안 된다 — 상수 동기화 확인
+    _dash = open(os.path.join(ROOT, 'private', 'dashboard.html'), encoding='utf-8').read()
+    check("dashboard.html의 CUM_START가 서버와 동일",
+          ("const CUM_START='%s'" % R0.CUM_START) in _dash,
+          [l for l in _dash.splitlines() if 'CUM_START=' in l][:1])
+    for _id in ('cumCutNote', 'evalCutNote', 'evalCVCutNote', 'dcmRelCutNote'):
+        check('컷오프 안내 컨테이너 %s' % _id, _dash.count(_id) >= 2, _dash.count(_id))
+    check('컷오프 배지 CSS가 #t6 스코프 밖에도 정의됨',
+          '\n  .cum-badge{' in _dash, '#t6 스코프에만 있으면 ②·④탭에서 색이 안 나온다')
+
     print('[6c] T1 과거 회차 소급 누적 — 라벨 추정·연도 제한·시드 병기')
     import rounds as R  # noqa: E402
     # (1) 라벨 자동 추정: 파일명·시트명에서만 추정하며 저장하지 않는다
